@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="pt-BR">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Teste de vídeo NVIDIA VSR</title>
+<style>
+body{margin:24px;background:#111;color:#eee;font:16px system-ui}main{max-width:1920px;margin:auto}video{width:100%;max-height:80vh;background:#000}button,select{font:inherit;padding:8px;margin:5px}#second{width:40%;display:none}output{display:block;margin:12px 0;font-variant-numeric:tabular-nums}
+</style>
+<main>
+<h1>Teste de reprodução</h1>
+<p>Escolha um vídeo. Use os controles para pausar, buscar e alternar tela cheia.</p>
+<label>Vídeo <select id="clip">
+<option value="h264-720p-30.mp4">H.264 · 720p · 30 FPS</option>
+<option value="h264-720p-60.mp4">H.264 · 720p · 60 FPS</option>
+<option value="h264-1080p-30.mp4">H.264 · 1080p · 30 FPS</option>
+<option value="vp9-720p-30.webm">VP9 · 720p · 30 FPS</option>
+<option value="av1-720p-30.webm">AV1 · 720p · 30 FPS</option>
+</select></label>
+<button id="fullscreen">Tela cheia</button>
+<button id="seek">Buscar +5 segundos</button>
+<button id="dual">Segundo vídeo</button>
+<video id="video" controls loop playsinline src="h264-720p-30.mp4"></video>
+<video id="second" controls loop playsinline muted src="h264-720p-30.mp4"></video>
+<output id="stats">Aguardando reprodução.</output>
+</main>
+<script>
+const video=document.querySelector('#video'),second=document.querySelector('#second');
+document.querySelector('#clip').onchange=event=>{const resume=!video.paused;video.src=event.target.value;video.load();if(resume)video.play().catch(()=>{});};
+document.querySelector('#fullscreen').onclick=()=>video.requestFullscreen().catch(()=>{});
+document.querySelector('#seek').onclick=()=>{if(Number.isFinite(video.duration))video.currentTime=(video.currentTime+5)%video.duration;};
+document.querySelector('#dual').onclick=()=>{const show=second.style.display!=='block';second.style.display=show?'block':'none';if(show)second.play().catch(()=>{});else second.pause();};
+setInterval(()=>{const q=video.getVideoPlaybackQuality();document.querySelector('#stats').textContent=`${video.videoWidth} × ${video.videoHeight} · ${video.currentTime.toFixed(2)} s · ${q.totalVideoFrames} frames · ${q.droppedVideoFrames} descartados`;},500);
+</script>
+</html>

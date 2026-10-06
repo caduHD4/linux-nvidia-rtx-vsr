@@ -1,0 +1,49 @@
+import("//build/config/clang/clang.gni")
+import("//build/buildflag_header.gni")
+import("features.gni")
+# Local open-source adapter core. Proprietary SDK files stay outside the checkout.
+buildflag_header("buildflags") {
+  header = "buildflags.h"
+  flags = [ "ENABLE_NVIDIA_VSR=$enable_nvidia_vsr" ]
+}
+config("headers") {
+  include_dirs = [ "include" ]
+  defines = [ "NVVFX_VSR_SDK_ROOT=\"$nvidia_vsr_sdk_root\"" ]
+}
+source_set("policy") {
+  sources = [
+    "src/processor_config.cpp",
+    "src/frame_eligibility.cpp",
+    "src/job_admission.cpp",
+  ]
+  public_configs = [ ":headers" ]
+  public_deps = [ ":buildflags" ]
+}
+if (enable_nvidia_vsr) {
+  assert(nvidia_vsr_sdk_root != "", "Set absolute nvidia_vsr_sdk_root")
+  source_set("backend") {
+    sources = [
+      "src/vsr_processor.cpp",
+      "src/image_descriptor.c",
+      "src/gl_bridge.cpp",
+    ]
+    cflags = [
+      "-isystem$nvidia_vsr_sdk_root/include",
+      "-isystem$nvidia_vsr_sdk_root/features/nvvfxvideosuperres/include",
+      "-isystem$nvidia_vsr_sdk_root/external/cuda/include",
+    ]
+    configs -= [ "//build/config/compiler:no_exceptions" ]
+    configs += [ "//build/config/compiler:exceptions" ]
+    if (clang_use_raw_ptr_plugin) {
+      # Preserve the official SDK ABI; its foreign structs cannot use raw_ptr.
+      cflags += [
+        "-Xclang",
+        "-plugin-arg-raw-ptr-plugin",
+        "-Xclang",
+        "raw-ptr-exclude-path=$nvidia_vsr_sdk_root/",
+      ]
+    }
+    public_deps = [ ":policy" ]
+    libs = [ "dl" ]
+  }
+}

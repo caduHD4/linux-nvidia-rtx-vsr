@@ -1,0 +1,2 @@
+# Patch context lines contain significant trailing spaces.
+*.patch -whitespace

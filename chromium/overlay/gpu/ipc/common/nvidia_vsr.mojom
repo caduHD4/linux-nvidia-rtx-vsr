@@ -1,0 +1,26 @@
+module gpu.mojom;
+import "gpu/ipc/common/mailbox.mojom";
+import "gpu/ipc/common/sync_token.mojom";
+import "ui/gfx/geometry/mojom/geometry.mojom";
+import "ui/gfx/mojom/color_space.mojom";
+
+struct NvidiaVsrRequest {
+  uint64 generation;
+  uint64 frame_id;
+  uint64 release_count;
+  Mailbox input;
+  Mailbox output;
+  array<SyncToken> dependencies;
+  gfx.mojom.Rect visible_rect;
+  gfx.mojom.Size output_size;
+  gfx.mojom.ColorSpace rgb_color_space;
+  uint32 quality;
+  float strength;
+  bool protected_video;
+  bool encrypted_track;
+};
+// Control/resources only. No CPU pixel data, texture IDs or device pointers.
+interface NvidiaVsr {
+  Process(NvidiaVsrRequest request) =>
+      (bool success, string status, SyncToken ready_token, float gpu_ms);
+};

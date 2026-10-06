@@ -1,0 +1,27 @@
+/build/
+/.cache/
+/.superpowers/
+/.worktrees/
+/.venv/
+/.sdk/
+/VFXSDK_linux_*.tgz
+__pycache__/
+*.pyc
+*.log
+
+# External checkouts, SDK distributions, generated media and credentials
+/depot_tools/
+/src/
+/out/
+/cache/
+/media/
+.env
+.env.*
+*.tgz
+*.tar.gz
+*.so
+*.so.*
+*.o
+*.a
+*.mp4
+*.webm

@@ -1,0 +1,474 @@
+diff --git a/media/base/media_switches.cc b/media/base/media_switches.cc
+index 6576dae682..a3b271f3b3 100644
+--- a/media/base/media_switches.cc
++++ b/media/base/media_switches.cc
+@@ -353,6 +353,8 @@ const char kHardwareVideoDevicePath[] = "hardware-video-device-path";
+ namespace media {
+ 
+ // Whether we should allow color space changes to flush AcceleratedVideoDecoder.
++BASE_FEATURE(kNvidiaVsrProbe, base::FEATURE_DISABLED_BY_DEFAULT);
++
+ BASE_FEATURE(kAVDColorSpaceChanges, base::FEATURE_ENABLED_BY_DEFAULT);
+ 
+ // Controls whether VideoFrameConverter accurately maps RGB to YUV color spaces
+diff --git a/media/base/media_switches.h b/media/base/media_switches.h
+index 6063916898..333ea32f2a 100644
+--- a/media/base/media_switches.h
++++ b/media/base/media_switches.h
+@@ -129,6 +129,9 @@ namespace media {
+ // All features in alphabetical order. The features should be documented
+ // alongside the definition of their values in the .cc file.
+ 
++// Metadata-only diagnostic; does not import or process pixels.
++MEDIA_EXPORT BASE_DECLARE_FEATURE(kNvidiaVsrProbe);
++
+ MEDIA_EXPORT BASE_DECLARE_FEATURE(kAVDColorSpaceChanges);
+ // TODO(crbug.com/467555325): Remove after M153 reaches stable.
+ MEDIA_EXPORT BASE_DECLARE_FEATURE(kAccurateVideoFrameConverterColorSpace);
+diff --git a/media/renderers/BUILD.gn b/media/renderers/BUILD.gn
+index 1a15973d0a..54e3406a14 100644
+--- a/media/renderers/BUILD.gn
++++ b/media/renderers/BUILD.gn
+@@ -11,6 +11,9 @@ source_set("renderers") {
+   visibility = [ "//media" ]
+ 
+   sources = [
++    "nvidia_vsr_frame_client.cc",
++    "nvidia_vsr_frame_client.h",
++    "nvidia_vsr_presentation_cache.h",
+     "audio_renderer_impl.cc",
+     "audio_renderer_impl.h",
+     "decrypting_renderer.cc",
+@@ -56,6 +59,7 @@ source_set("renderers") {
+     "//media/base",
+     "//media/filters",
+     "//media/video",
++    "//third_party/nvidia_vsr:policy",
+     "//third_party/fp16",
+     "//third_party/libyuv",
+     "//ui/gfx:memory_buffer",
+@@ -123,6 +127,8 @@ static_library("test_support") {
+ source_set("unit_tests") {
+   testonly = true
+   sources = [
++    "nvidia_vsr_frame_client_unittest.cc",
++    "nvidia_vsr_presentation_cache_unittest.cc",
+     "audio_renderer_impl_unittest.cc",
+     "decrypting_renderer_unittest.cc",
+     "paint_canvas_video_renderer_unittest.cc",
+@@ -133,6 +139,7 @@ source_set("unit_tests") {
+   ]
+   configs += [ "//media:media_config" ]
+   deps = [
++    "//third_party/nvidia_vsr:policy",
+     "//base",
+     "//base/test:test_support",
+     "//cc/paint",
+diff --git a/media/renderers/video_renderer_impl.cc b/media/renderers/video_renderer_impl.cc
+index 576cc90a35..9c501c115b 100644
+--- a/media/renderers/video_renderer_impl.cc
++++ b/media/renderers/video_renderer_impl.cc
+@@ -26,6 +26,8 @@
+ #include "media/base/pipeline_status.h"
+ #include "media/base/renderer_client.h"
+ #include "media/base/video_frame.h"
++#include "media/renderers/nvidia_vsr_frame_client.h"
++#include "ui/gl/gl_features.h"
+ #include "third_party/perfetto/include/perfetto/tracing/track.h"
+ 
+ namespace media {
+@@ -81,6 +83,10 @@ VideoRendererImpl::VideoRendererImpl(
+       min_buffered_frames_(initial_buffering_size_.value()),
+       max_buffered_frames_(initial_buffering_size_.value()) {
+   DCHECK(create_video_decoders_cb_);
++  if (base::FeatureList::IsEnabled(kNvidiaVsrProbe) ||
++      base::FeatureList::IsEnabled(features::kNvidiaVideoSuperResolution)) {
++    nvidia_vsr_client_ = std::make_unique<NvidiaVsrFrameClient>(media_log);
++  }
+ }
+ 
+ VideoRendererImpl::~VideoRendererImpl() {
+@@ -109,6 +115,7 @@ void VideoRendererImpl::Flush(base::OnceClosure callback) {
+   DCHECK_EQ(state_, kPlaying);
+   flush_cb_ = std::move(callback);
+   state_ = kFlushing;
++  nvidia_vsr_cache_.Invalidate();
+ 
+   if (buffering_state_ != BUFFERING_HAVE_NOTHING) {
+     buffering_state_ = BUFFERING_HAVE_NOTHING;
+@@ -292,6 +299,8 @@ scoped_refptr<VideoFrame> VideoRendererImpl::Render(
+                      result->natural_size()));
+ 
+   TRACE_EVENT_END("media", "frame", result->AsHumanReadableString());
++  if (nvidia_vsr_client_)
++    result = nvidia_vsr_cache_.Select(result->unique_id().GetUnsafeValue(), result);
+   return result;
+ }
+ 
+@@ -400,6 +409,10 @@ void VideoRendererImpl::OnConfigChange(const VideoDecoderConfig& config) {
+   // RendererClient only cares to know about config changes that differ from
+   // previous configs.
+   if (!current_decoder_config_.Matches(config)) {
++    {
++      base::AutoLock auto_lock(lock_);
++      nvidia_vsr_cache_.Invalidate();
++    }
+     current_decoder_config_ = config;
+     client_->OnVideoConfigChange(config);
+   }
+@@ -805,9 +818,27 @@ void VideoRendererImpl::AddReadyFrame_Locked(scoped_refptr<VideoFrame> frame) {
+   if (frame->metadata().power_efficient)
+     ++stats_.video_frames_decoded_power_efficient;
+ 
++  if (nvidia_vsr_client_) {
++    task_runner_->PostTask(
++        FROM_HERE, base::BindOnce(&VideoRendererImpl::ObserveNvidiaVsrFrame,
++                                 weak_factory_.GetWeakPtr(), frame,
++                                 nvidia_vsr_cache_.generation(),
++                                 current_decoder_config_.is_encrypted()));
++  }
+   algorithm_->EnqueueFrame(std::move(frame));
+ }
+ 
++void VideoRendererImpl::ObserveNvidiaVsrFrame(
++    scoped_refptr<VideoFrame> frame, uint64_t generation, bool encrypted_track) {
++  DCHECK(task_runner_->RunsTasksInCurrentSequence());
++  {
++    base::AutoLock auto_lock(lock_);
++    if (generation != nvidia_vsr_cache_.generation())
++      return;
++  }
++  nvidia_vsr_client_->Observe(std::move(frame), encrypted_track, generation);
++}
++
+ void VideoRendererImpl::AttemptRead_Locked() {
+   DCHECK(task_runner_->RunsTasksInCurrentSequence());
+   lock_.AssertAcquired();
+@@ -1107,6 +1138,9 @@ void VideoRendererImpl::PaintFirstFrame_Locked() {
+   auto first_frame =
+       algorithm_->Render(base::TimeTicks(), base::TimeTicks(), nullptr);
+   DCHECK(first_frame);
++  if (nvidia_vsr_client_)
++    first_frame = nvidia_vsr_cache_.Select(
++        first_frame->unique_id().GetUnsafeValue(), first_frame);
+   sink_->PaintSingleFrame(first_frame);
+   CheckForMetadataChanges(first_frame->format(), first_frame->natural_size());
+   painted_first_frame_ = true;
+diff --git a/media/renderers/video_renderer_impl.h b/media/renderers/video_renderer_impl.h
+index 8ad331101c..60a6b213b5 100644
+--- a/media/renderers/video_renderer_impl.h
++++ b/media/renderers/video_renderer_impl.h
+@@ -34,6 +34,7 @@
+ #include "media/filters/decoder_stream.h"
+ #include "media/filters/video_renderer_algorithm.h"
+ #include "media/renderers/renderer_impl_factory.h"
++#include "media/renderers/nvidia_vsr_presentation_cache.h"
+ #include "media/video/mappable_shared_image_video_frame_pool.h"
+ 
+ namespace base {
+@@ -42,6 +43,8 @@ class TickClock;
+ 
+ namespace media {
+ 
++class NvidiaVsrFrameClient;
++
+ // VideoRendererImpl handles reading from a VideoDecoderStream storing the
+ // results in a queue of decoded frames and executing a callback when a frame is
+ // ready for rendering.
+@@ -127,6 +130,8 @@ class MEDIA_EXPORT VideoRendererImpl
+ 
+   // Helper method for enqueueing a frame to |alogorithm_|.
+   void AddReadyFrame_Locked(scoped_refptr<VideoFrame> frame);
++  void ObserveNvidiaVsrFrame(scoped_refptr<VideoFrame> frame,
++                             uint64_t generation, bool encrypted_track);
+ 
+   // Helper method that schedules an asynchronous read from the
+   // |video_decoder_stream_| as long as there isn't a pending read and we have
+@@ -319,6 +324,9 @@ class MEDIA_EXPORT VideoRendererImpl
+   // |mappable_shared_image_pool_| for optimal memory release when a frames are
+   // still held by the compositor.
+   std::unique_ptr<VideoRendererAlgorithm> algorithm_;
++  // Cache is protected by lock_; client is accessed only on media sequence.
++  NvidiaVsrPresentationCache nvidia_vsr_cache_;
++  std::unique_ptr<NvidiaVsrFrameClient> nvidia_vsr_client_;
+ 
+   // Indicates that Render() was called with |background_rendering| set to true,
+   // so we've entered a background rendering mode where dropped frames are not
+diff --git a/ui/gl/gl_features.cc b/ui/gl/gl_features.cc
+index 99bfd69948..78ed1997f2 100644
+--- a/ui/gl/gl_features.cc
++++ b/ui/gl/gl_features.cc
+@@ -35,6 +35,8 @@
+ #endif
+ 
+ namespace features {
++
++BASE_FEATURE(kNvidiaVideoSuperResolution, base::FEATURE_DISABLED_BY_DEFAULT);
+ namespace {
+ 
+ #if BUILDFLAG(IS_ANDROID)
+diff --git a/ui/gl/gl_features.h b/ui/gl/gl_features.h
+index 9939e05487..8c67c730ac 100644
+--- a/ui/gl/gl_features.h
++++ b/ui/gl/gl_features.h
+@@ -15,6 +15,9 @@
+ 
+ namespace features {
+ 
++// Experimental native NVIDIA EGL/CUDA video processing; opt-in only.
++GL_EXPORT BASE_DECLARE_FEATURE(kNvidiaVideoSuperResolution);
++
+ // Controls if GPU should synchronize presentation with vsync.
+ GL_EXPORT bool UseGpuVsync();
+ 
+diff --git a/ui/ozone/platform/x11/x11_surface_factory.cc b/ui/ozone/platform/x11/x11_surface_factory.cc
+index 07dd8200a4..ba30c6dbbd 100644
+--- a/ui/ozone/platform/x11/x11_surface_factory.cc
++++ b/ui/ozone/platform/x11/x11_surface_factory.cc
+@@ -5,6 +5,8 @@
+ #include "ui/ozone/platform/x11/x11_surface_factory.h"
+ 
+ #include <memory>
++#include "base/feature_list.h"
++#include "ui/gl/gl_features.h"
+ 
+ #include "components/viz/common/resources/shared_image_format_utils.h"
+ #include "gpu/vulkan/buildflags.h"
+@@ -174,14 +176,20 @@ X11SurfaceFactory::~X11SurfaceFactory() = default;
+ 
+ std::vector<gl::GLImplementationParts>
+ X11SurfaceFactory::GetAllowedGLImplementations() {
+-  return std::vector<gl::GLImplementationParts>{
+-      gl::GLImplementationParts(gl::kGLImplementationEGLANGLE),
+-  };
++  std::vector<gl::GLImplementationParts> allowed{
++      gl::GLImplementationParts(gl::kGLImplementationEGLANGLE)};
++  if (base::FeatureList::IsEnabled(features::kNvidiaVideoSuperResolution))
++    allowed.emplace_back(gl::kGLImplementationEGLGLES2);
++  return allowed;
+ }
+ 
+ GLOzone* X11SurfaceFactory::GetGLOzone(
+     const gl::GLImplementationParts& implementation) {
+   switch (implementation.gl) {
++    case gl::kGLImplementationEGLGLES2:
++      if (!base::FeatureList::IsEnabled(features::kNvidiaVideoSuperResolution))
++        return nullptr;
++      return egl_implementation_.get();
+     case gl::kGLImplementationEGLANGLE:
+       return egl_implementation_.get();
+     default:
+diff --git a/media/renderers/nvidia_vsr_frame_client.cc b/media/renderers/nvidia_vsr_frame_client.cc
+new file mode 100644
+index 0000000000..34a8391cd6
+--- /dev/null
++++ b/media/renderers/nvidia_vsr_frame_client.cc
+@@ -0,0 +1,54 @@
++#include "media/renderers/nvidia_vsr_frame_client.h"
++#include "base/strings/string_number_conversions.h"
++#include "gpu/command_buffer/client/client_shared_image.h"
++#include "media/base/media_log.h"
++#include "media/base/video_frame.h"
++#include "media/base/video_types.h"
++namespace media {
++nvvfx_vsr::FrameBypass ClassifyNvidiaVsrFrame(const VideoFrame& frame,
++                                           bool encrypted_track) {
++  nvvfx_vsr::FrameEligibility info;
++  info.encrypted_track=encrypted_track;
++  info.protected_video=frame.metadata().protected_video;
++  info.hw_protected=frame.metadata().hw_protected;
++  // Do not examine the GPU image at all for a protected/encrypted frame.
++  if(info.encrypted_track || info.protected_video || info.hw_protected)
++    return nvvfx_vsr::FrameBypass::Protected;
++  info.gpu_image=frame.HasSharedImage();
++  info.opaque=IsOpaque(frame.format());
++  info.bit_depth=frame.BitDepth();
++  info.supported_format=frame.format()==PIXEL_FORMAT_NV12 ||
++      frame.format()==PIXEL_FORMAT_XRGB || frame.format()==PIXEL_FORMAT_XBGR;
++  info.valid_sdr_color=frame.ColorSpace().IsValid();
++  info.hdr=frame.ColorSpace().IsHDR();
++  info.transformed=frame.metadata().transformation.has_value() &&
++      !(frame.metadata().transformation.value()==kNoTransformation);
++  const auto visible=frame.visible_rect().size();
++  const auto natural=frame.natural_size();
++  info.square_pixels=static_cast<int64_t>(visible.width())*natural.height()==
++      static_cast<int64_t>(visible.height())*natural.width();
++  info.input={visible.width(),visible.height()};
++  return nvvfx_vsr::ClassifyFrame(info);
++}
++NvidiaVsrFrameClient::NvidiaVsrFrameClient(MediaLog* log):log_(log->Clone()) {}
++NvidiaVsrFrameClient::~NvidiaVsrFrameClient()=default;
++void NvidiaVsrFrameClient::Observe(scoped_refptr<VideoFrame> frame,
++                                   bool encrypted_track,uint64_t generation) {
++  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
++  const auto reason=ClassifyNvidiaVsrFrame(*frame,encrypted_track);
++  std::string descriptor="format="+VideoPixelFormatToString(frame->format())+
++      " visible="+frame->visible_rect().ToString()+
++      " natural="+frame->natural_size().ToString()+
++      " bypass="+base::NumberToString(static_cast<int>(reason));
++  if(reason!=nvvfx_vsr::FrameBypass::Protected) {
++    descriptor+=" color="+frame->ColorSpace().ToString();
++    if(frame->HasSharedImage())
++      descriptor+=" shared_image="+frame->shared_image()->format().ToString();
++    else descriptor+=" storage=cpu";
++  }
++  // Bound configuration logging even for streams with frequent size changes.
++  if(reported_.size()<32 && reported_.insert(descriptor).second)
++    MEDIA_LOG(INFO,log_) << "NVIDIA VSR probe generation=" << generation
++                         << " " << descriptor;
++}
++}  // namespace media
+diff --git a/media/renderers/nvidia_vsr_frame_client.h b/media/renderers/nvidia_vsr_frame_client.h
+new file mode 100644
+index 0000000000..a0a143d96e
+--- /dev/null
++++ b/media/renderers/nvidia_vsr_frame_client.h
+@@ -0,0 +1,29 @@
++#ifndef MEDIA_RENDERERS_NVIDIA_VSR_FRAME_CLIENT_H_
++#define MEDIA_RENDERERS_NVIDIA_VSR_FRAME_CLIENT_H_
++#include <cstdint>
++#include <memory>
++#include <set>
++#include <string>
++#include "base/memory/scoped_refptr.h"
++#include "base/sequence_checker.h"
++#include "media/base/media_export.h"
++#include "nvvfx_vsr/frame_eligibility.h"
++namespace media {
++class MediaLog;
++class VideoFrame;
++MEDIA_EXPORT nvvfx_vsr::FrameBypass ClassifyNvidiaVsrFrame(
++    const VideoFrame& frame,bool encrypted_track);
++// Media-sequence adapter. Metadata classification never imports a SharedImage.
++class NvidiaVsrFrameClient {
++ public:
++  explicit NvidiaVsrFrameClient(MediaLog* log);
++  ~NvidiaVsrFrameClient();
++  void Observe(scoped_refptr<VideoFrame> frame,bool encrypted_track,
++               std::uint64_t generation);
++ private:
++  std::unique_ptr<MediaLog> log_;
++  std::set<std::string> reported_;
++  SEQUENCE_CHECKER(sequence_checker_);
++};
++}  // namespace media
++#endif
+diff --git a/media/renderers/nvidia_vsr_frame_client_unittest.cc b/media/renderers/nvidia_vsr_frame_client_unittest.cc
+new file mode 100644
+index 0000000000..2b45b0f853
+--- /dev/null
++++ b/media/renderers/nvidia_vsr_frame_client_unittest.cc
+@@ -0,0 +1,46 @@
++#include "media/renderers/nvidia_vsr_frame_client.h"
++#include "base/functional/callback_helpers.h"
++#include "gpu/command_buffer/client/client_shared_image.h"
++#include "gpu/command_buffer/common/shared_image_info.h"
++#include "media/base/video_frame.h"
++#include "testing/gtest/include/gtest/gtest.h"
++namespace media {
++namespace {
++scoped_refptr<VideoFrame> MakeGpuFrame() {
++  gpu::SharedImageMetadata metadata;
++  metadata.format=viz::SinglePlaneFormat::kRGBX_8888;
++  metadata.size=gfx::Size(1280,720);
++  metadata.color_space=gfx::ColorSpace::CreateREC709();
++  metadata.alpha_type=kOpaque_SkAlphaType;
++  auto frame=VideoFrame::WrapSharedImage(PIXEL_FORMAT_XBGR,
++      gpu::ClientSharedImage::CreateForTesting(metadata),{},base::DoNothing(),
++      gfx::Rect(metadata.size),metadata.size,base::TimeDelta());
++  frame->set_color_space(metadata.color_space);
++  return frame;
++}
++TEST(NvidiaVsrFrameClientTest, AdmitsOpaqueSdrSharedImage) {
++  auto frame=MakeGpuFrame();
++  EXPECT_EQ(ClassifyNvidiaVsrFrame(*frame,false),nvvfx_vsr::FrameBypass::None);
++}
++TEST(NvidiaVsrFrameClientTest, ProtectionPrecedesAllImageAccess) {
++  auto frame=VideoFrame::CreateBlackFrame(gfx::Size(1280,720));
++  EXPECT_EQ(ClassifyNvidiaVsrFrame(*frame,true),nvvfx_vsr::FrameBypass::Protected);
++  frame->metadata().protected_video=true;
++  EXPECT_EQ(ClassifyNvidiaVsrFrame(*frame,false),nvvfx_vsr::FrameBypass::Protected);
++  frame->metadata().protected_video=false;frame->metadata().hw_protected=true;
++  EXPECT_EQ(ClassifyNvidiaVsrFrame(*frame,false),nvvfx_vsr::FrameBypass::Protected);
++}
++TEST(NvidiaVsrFrameClientTest, RejectsCpuAndHdr) {
++  auto cpu=VideoFrame::CreateBlackFrame(gfx::Size(1280,720));
++  EXPECT_EQ(ClassifyNvidiaVsrFrame(*cpu,false),nvvfx_vsr::FrameBypass::CpuFrame);
++  auto frame=MakeGpuFrame();
++  frame->set_color_space(gfx::ColorSpace::CreateHDR10());
++  EXPECT_EQ(ClassifyNvidiaVsrFrame(*frame,false),nvvfx_vsr::FrameBypass::Color);
++}
++TEST(NvidiaVsrFrameClientTest, RejectsTransformedFrame) {
++  auto frame=MakeGpuFrame();
++  frame->metadata().transformation=VideoTransformation(VIDEO_ROTATION_90);
++  EXPECT_EQ(ClassifyNvidiaVsrFrame(*frame,false),nvvfx_vsr::FrameBypass::Geometry);
++}
++}  // namespace
++}  // namespace media
+diff --git a/media/renderers/nvidia_vsr_presentation_cache.h b/media/renderers/nvidia_vsr_presentation_cache.h
+new file mode 100644
+index 0000000000..49f6c764e4
+--- /dev/null
++++ b/media/renderers/nvidia_vsr_presentation_cache.h
+@@ -0,0 +1,11 @@
++#ifndef MEDIA_RENDERERS_NVIDIA_VSR_PRESENTATION_CACHE_H_
++#define MEDIA_RENDERERS_NVIDIA_VSR_PRESENTATION_CACHE_H_
++#include "base/memory/scoped_refptr.h"
++#include "media/base/video_frame.h"
++#include "nvvfx_vsr/presentation_cache.h"
++namespace media {
++// Serialized by VideoRendererImpl::lock_; frame IDs, never PTS, are keys.
++using NvidiaVsrPresentationCache =
++    nvvfx_vsr::PresentationCache<scoped_refptr<VideoFrame>>;
++}  // namespace media
++#endif
+diff --git a/media/renderers/nvidia_vsr_presentation_cache_unittest.cc b/media/renderers/nvidia_vsr_presentation_cache_unittest.cc
+new file mode 100644
+index 0000000000..e3e729ca63
+--- /dev/null
++++ b/media/renderers/nvidia_vsr_presentation_cache_unittest.cc
+@@ -0,0 +1,44 @@
++#include "media/renderers/nvidia_vsr_presentation_cache.h"
++#include "testing/gtest/include/gtest/gtest.h"
++namespace media {
++namespace {
++TEST(NvidiaVsrPresentationCacheTest, ReadyAndPendingChoicesStayFixedAt180Hz) {
++  auto original=VideoFrame::CreateBlackFrame(gfx::Size(16,16));
++  auto enhanced=VideoFrame::CreateBlackFrame(gfx::Size(32,32));
++  NvidiaVsrPresentationCache cache;
++  const auto id=original->unique_id().GetUnsafeValue();
++  EXPECT_TRUE(cache.Complete(cache.generation(),id,enhanced));
++  for(int i=0;i<180;++i) EXPECT_EQ(cache.Select(id,original),enhanced);
++  auto next=VideoFrame::CreateBlackFrame(gfx::Size(16,16));
++  const auto next_id=next->unique_id().GetUnsafeValue();
++  EXPECT_EQ(cache.Select(next_id,next),next);
++  EXPECT_FALSE(cache.Complete(cache.generation(),next_id,enhanced));
++  for(int i=0;i<180;++i) EXPECT_EQ(cache.Select(next_id,next),next);
++}
++TEST(NvidiaVsrPresentationCacheTest, SeekRejectsOldGenerationDespiteRepeatedPts) {
++  auto original=VideoFrame::CreateBlackFrame(gfx::Size(16,16));
++  auto enhanced=VideoFrame::CreateBlackFrame(gfx::Size(32,32));
++  NvidiaVsrPresentationCache cache;
++  const auto generation=cache.generation();
++  cache.Invalidate();
++  EXPECT_FALSE(cache.Complete(generation,original->unique_id().GetUnsafeValue(),enhanced));
++  EXPECT_EQ(cache.Select(original->unique_id().GetUnsafeValue(),original),original);
++  auto next=VideoFrame::CreateBlackFrame(gfx::Size(16,16));
++  EXPECT_EQ(original->timestamp(),next->timestamp());
++  EXPECT_TRUE(cache.Complete(cache.generation(),next->unique_id().GetUnsafeValue(),enhanced));
++  EXPECT_EQ(cache.Select(next->unique_id().GetUnsafeValue(),next),enhanced);
++}
++TEST(NvidiaVsrPresentationCacheTest, ReleasesPreviousOutputWhenNextFrameSelected) {
++  auto original=VideoFrame::CreateBlackFrame(gfx::Size(16,16));
++  auto enhanced=VideoFrame::CreateBlackFrame(gfx::Size(32,32));
++  NvidiaVsrPresentationCache cache(3);
++  cache.Complete(cache.generation(),1,enhanced);
++  cache.Select(1,original);
++  EXPECT_FALSE(enhanced->HasOneRef());
++  cache.Select(2,original);
++  EXPECT_TRUE(enhanced->HasOneRef());
++  for(uint64_t id=3;id<100;++id) cache.Complete(cache.generation(),id,enhanced);
++  EXPECT_LE(cache.size(),3u);
++}
++}  // namespace
++}  // namespace media

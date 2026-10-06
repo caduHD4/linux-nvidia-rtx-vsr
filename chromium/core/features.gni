@@ -1,0 +1,4 @@
+declare_args() {
+  enable_nvidia_vsr = false
+  nvidia_vsr_sdk_root = ""
+}
