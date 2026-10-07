@@ -93,6 +93,18 @@ active remains unvalidated. Selection events are sampled every120 frames, so
 the exit check is a regression signal rather than exact per-frame measurement.
 The executable identifies as `Brave Browser Development 154.1.96.0`.
 
+## In-browser quality (source builds after the first preview)
+
+Open **Settings → System** (`brave://settings/system`) and choose **Off**, **1080p**,
+**1440p**, or **4K** under **RTX Video Super Resolution**. Click **Restart Brave**
+to apply it. The setting is saved for subsequent launches; it is shared by all
+windows using that browser user-data directory. Enhancement remains fullscreen-only.
+1080p source at the 1080p target uses native denoise; 1440p/4K supersample it.
+
+The existing launcher preset initializes new profiles. Once saved, the in-browser
+preference takes priority. The first published Brave binary preview predates this
+selector; its installer still chooses the preset through `--target`.
+
 ## Updates
 
 Update source pins deliberately, apply official Brave patches first, resolve VSR

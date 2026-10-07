@@ -6,6 +6,6 @@ Add a Linux-only section to Settings > System with Off, 1080p, 1440p and 4K. Sav
 
 Capture the preference once per browser session and propagate a validated `--nvidia-vsr-target-height` switch to renderer and GPU child processes. Both paths use a common core selector accepting the explicit height. Zero bypasses inference; malformed explicit values fail closed. Existing environment presets remain supported when the switch is absent (Chromium and older builds). Preserve fullscreen, source-size, HDR/protected/DRM gates and synchronization.
 
-Do not change GN optimization settings, sandbox behavior, SDK distribution or GPU interop. Export a separate incremental patch after the existing Brave VSR patch, preserving the published baseline.
+Do not change GN optimization settings, sandbox behavior, SDK distribution or GPU interop. Export the quality changes into the complete atomic Brave VSR patch. The published baseline remains preserved in its release commit and binary assets. Existing baseline checkouts upgrade through a separate incremental patch only after a copied-tree simulation verifies the entire resulting full patch.
 
 Verify core mode/size selection, disabled and invalid values, precedence over environment, Python regression tests, TypeScript/native compilation and real UI persistence/restart/playback. Open a terminal following the build log.

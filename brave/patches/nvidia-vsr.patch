@@ -1,3 +1,168 @@
+diff --git a/brave/browser/brave_content_browser_client.cc b/brave/browser/brave_content_browser_client.cc
+--- a/brave/browser/brave_content_browser_client.cc
++++ b/brave/browser/brave_content_browser_client.cc
+@@ -19,6 +19,7 @@
+ #include "base/memory/scoped_refptr.h"
+ #include "base/strings/strcat.h"
+ #include "base/strings/string_number_conversions.h"
++#include "base/environment.h"
+ #include "base/system/sys_info.h"
+ #include "brave/browser/bluetooth/brave_bluetooth_delegate.h"
+ #include "brave/browser/brave_account/brave_account_navigation_throttle.h"
+@@ -1122,6 +1123,32 @@
+   ChromeContentBrowserClient::AppendExtraCommandLineSwitches(command_line,
+                                                              child_process_id);
+ 
++#if BUILDFLAG(IS_LINUX)
++  const std::string child_type = command_line->GetSwitchValueASCII(switches::kProcessType);
++  if ((child_type == switches::kRendererProcess || child_type == switches::kGpuProcess) &&
++      g_browser_process && g_browser_process->local_state() &&
++      g_browser_process->local_state()->FindPreference("brave.nvidia_vsr_target_height")) {
++  // Snapshot once: all renderer/GPU generations must agree until relaunch.
++  static const int vsr_target_height = [] {
++    PrefService* prefs = g_browser_process->local_state();
++    if (prefs->FindPreference("brave.nvidia_vsr_target_height")->IsDefaultValue()) {
++      auto preset = base::Environment::Create()->GetVar("NVVFX_VSR_TARGET_HEIGHT");
++      int height = 2160;
++      if (preset && base::StringToInt(*preset, &height) &&
++          (height == 1080 || height == 1440 || height == 2160))
++        prefs->SetInteger("brave.nvidia_vsr_target_height", height);
++    }
++    int height = prefs->GetInteger("brave.nvidia_vsr_target_height");
++    const auto* browser = base::CommandLine::ForCurrentProcess();
++    if (browser->HasSwitch("nvidia-vsr-target-height") &&
++        !base::StringToInt(browser->GetSwitchValueASCII("nvidia-vsr-target-height"), &height))
++      return 0;
++    return height == 1080 || height == 1440 || height == 2160 ? height : 0;
++  }();
++  command_line->AppendSwitchASCII("nvidia-vsr-target-height", base::NumberToString(vsr_target_height));
++  }
++#endif
++
+   std::string process_type =
+       command_line->GetSwitchValueASCII(switches::kProcessType);
+   if (process_type == switches::kRendererProcess) {
+diff --git a/brave/browser/brave_local_state_prefs.cc b/brave/browser/brave_local_state_prefs.cc
+--- a/brave/browser/brave_local_state_prefs.cc
++++ b/brave/browser/brave_local_state_prefs.cc
+@@ -170,6 +170,9 @@
+ }
+ 
+ void RegisterLocalStatePrefs(PrefRegistrySimple* registry) {
++#if BUILDFLAG(IS_LINUX)
++  registry->RegisterIntegerPref("brave.nvidia_vsr_target_height", 2160);
++#endif
+   brave_shields::RegisterPrefsForAdBlockService(registry);
+   // `kStatsReportingEnabled` is the user/policy-facing opt-in for anonymous
+   // usage pings. It is read by other systems (privacy settings UI, policy
+diff --git a/brave/browser/extensions/api/settings_private/brave_prefs_util.cc b/brave/browser/extensions/api/settings_private/brave_prefs_util.cc
+--- a/brave/browser/extensions/api/settings_private/brave_prefs_util.cc
++++ b/brave/browser/extensions/api/settings_private/brave_prefs_util.cc
+@@ -118,6 +118,9 @@
+   // Start with parent class allowlist
+   const auto chromium_prefs = PrefsUtil::GetAllowlistedKeys();
+   s_brave_allowlist->insert(chromium_prefs.begin(), chromium_prefs.end());
++#if BUILDFLAG(IS_LINUX)
++  (*s_brave_allowlist)["brave.nvidia_vsr_target_height"] = settings_api::PrefType::kNumber;
++#endif
+   // Add Brave values to the allowlist
+   // import data
+   (*s_brave_allowlist)[kImportDialogExtensions] =
+diff --git a/brave/chromium_src/chrome/browser/resources/settings/system_page/system_page.html.ts.lit_mangler.ts b/brave/chromium_src/chrome/browser/resources/settings/system_page/system_page.html.ts.lit_mangler.ts
+--- a/brave/chromium_src/chrome/browser/resources/settings/system_page/system_page.html.ts.lit_mangler.ts
++++ b/brave/chromium_src/chrome/browser/resources/settings/system_page/system_page.html.ts.lit_mangler.ts
+@@ -33,6 +33,24 @@
+         @click="\${this.onShortcutsClick_}">
+      </cr-link-row>`)
+ 
++  section.insertAdjacentHTML(
++    'beforeend',
++    `<div id="nvidiaVsrSettings" class="settings-box" ?hidden="\${!this.vsrIsLinux_}">
++       <div class="start">
++         <label for="nvidiaVsrQuality">RTX Video Super Resolution</label>
++         <div class="secondary">Enhance fullscreen videos. Changes take effect after restarting Brave.</div>
++         <div role="status">\${this.vsrError_}</div>
++       </div>
++       <select id="nvidiaVsrQuality" aria-label="RTX Video Super Resolution quality"
++           ?disabled="\${!this.vsrLoaded_}" @change="\${this.onVsrQualityChange_}">
++         <option value="0" ?selected="\${this.vsrTargetHeight_ === 0}">Off</option>
++         <option value="1080" ?selected="\${this.vsrTargetHeight_ === 1080}">1080p</option>
++         <option value="1440" ?selected="\${this.vsrTargetHeight_ === 1440}">1440p</option>
++         <option value="2160" ?selected="\${this.vsrTargetHeight_ === 2160}">4K</option>
++       </select>
++       <cr-button id="nvidiaVsrRestart" @click="\${this.onRestartClick_}">Restart Brave</cr-button>
++     </div>`)
++
+   // Note: browser.confirm_to_quit isn't registered as a pref outside of mac
+   // (see chrome/browser/ui/cocoa/confirm_quit.cc), so the toggle for it must
+   // not be mounted at all on other platforms -- a build-time "if expr" can't
+diff --git a/brave/chromium_src/chrome/browser/resources/settings/system_page/system_page.ts b/brave/chromium_src/chrome/browser/resources/settings/system_page/system_page.ts
+--- a/brave/chromium_src/chrome/browser/resources/settings/system_page/system_page.ts
++++ b/brave/chromium_src/chrome/browser/resources/settings/system_page/system_page.ts
+@@ -3,7 +3,7 @@
+ // License, v. 2.0. If a copy of the MPL was not distributed with this file,
+ // You can obtain one at https://mozilla.org/MPL/2.0/.
+ 
+-import { isMac } from '//resources/js/platform.js'
++import { isMac, isLinux } from '//resources/js/platform.js'
+ 
+ import { loadTimeData } from '../i18n_setup.js'
+ import { routes } from '../route.js'
+@@ -18,6 +18,11 @@
+ // via the upstream system_page.html.ts import) type-checks.
+ declare module './system_page-chromium.js' {
+   interface SettingsSystemPageElement {
++    vsrTargetHeight_: number
++    vsrLoaded_: boolean
++    vsrIsLinux_: boolean
++    vsrError_: string
++    onVsrQualityChange_(event: Event): Promise<void>
+     shortcutsSupported_: boolean
+     isMac_: boolean
+     warnBeforeQuittingLabel_: string
+@@ -29,9 +34,42 @@
+   static override get properties() {
+     return {
+       ...super.properties,
++      vsrTargetHeight_: { type: Number },
++      vsrLoaded_: { type: Boolean },
++      vsrIsLinux_: { type: Boolean },
++      vsrError_: { type: String },
+       shortcutsSupported_: { type: Boolean },
+       isMac_: { type: Boolean },
+       warnBeforeQuittingLabel_: { type: String },
++    }
++  }
++
++  override accessor vsrTargetHeight_: number = 2160
++  override accessor vsrLoaded_: boolean = false
++  override accessor vsrIsLinux_: boolean = isLinux
++  override accessor vsrError_: string = ''
++
++  override connectedCallback() {
++    super.connectedCallback()
++    if (isLinux) {
++      chrome.settingsPrivate.getPref('brave.nvidia_vsr_target_height').then(pref => {
++        this.vsrTargetHeight_ = Number(pref.value)
++        this.vsrLoaded_ = true
++      }).catch(() => { this.vsrError_ = 'Could not load VSR settings.' })
++    }
++  }
++
++  override async onVsrQualityChange_(event: Event) {
++    const height = Number((event.target as HTMLSelectElement).value)
++    if (![0, 1080, 1440, 2160].includes(height)) return
++    try {
++      const saved = await chrome.settingsPrivate.setPref('brave.nvidia_vsr_target_height', height)
++      if (!saved) throw new Error('Preference rejected')
++      this.vsrTargetHeight_ = height
++      this.vsrError_ = ''
++    } catch {
++      (event.target as HTMLSelectElement).value = String(this.vsrTargetHeight_)
++      this.vsrError_ = 'Could not save VSR settings.'
+     }
+   }
+ 
 diff --git a/content/common/BUILD.gn b/content/common/BUILD.gn
 index 7af4d8bb34..b28bb0f31f 100644
 --- a/content/common/BUILD.gn
@@ -1394,12 +1559,13 @@ index 0e38b456d7..779027c585 100644
  
 diff --git a/gpu/ipc/service/nvidia_vsr_gpu_service.cc b/gpu/ipc/service/nvidia_vsr_gpu_service.cc
 new file mode 100644
-index 0000000000..da64fd2d46
 --- /dev/null
 +++ b/gpu/ipc/service/nvidia_vsr_gpu_service.cc
-@@ -0,0 +1,483 @@
+@@ -0,0 +1,494 @@
 +#include "gpu/ipc/service/nvidia_vsr_gpu_service.h"
 +#include <optional>
++#include "base/command_line.h"
++#include "base/strings/string_number_conversions.h"
 +#include <vector>
 +#include "base/feature_list.h"
 +#include "base/functional/bind.h"
@@ -1436,6 +1602,14 @@ index 0000000000..da64fd2d46
 +#include "ui/gl/init/gl_factory.h"
 +namespace gpu {
 +namespace {
++int VsrTargetHeight() {
++  const auto* command = base::CommandLine::ForCurrentProcess();
++  if (!command->HasSwitch("nvidia-vsr-target-height")) return -1;
++  int height = 0;
++  if (!base::StringToInt(command->GetSwitchValueASCII("nvidia-vsr-target-height"), &height)) return 0;
++  return height == 1080 || height == 1440 || height == 2160 ? height : 0;
++}
++
 +uint64_t NowMs() { return base::TimeTicks::Now().since_origin().InMilliseconds(); }
 +bool SameSize(nvvfx_vsr::Dimensions a,nvvfx_vsr::Dimensions b) {
 +  return a.width==b.width && a.height==b.height;
@@ -1505,7 +1679,8 @@ index 0000000000..da64fd2d46
 +}
 +bool NvidiaVsrGpuService::Initialize() {
 +  const auto gl_implementation = gl::GetGLImplementation();
-+  if (!base::FeatureList::IsEnabled(features::kNvidiaVideoSuperResolution)) {
++  if (VsrTargetHeight() == 0 ||
++      !base::FeatureList::IsEnabled(features::kNvidiaVideoSuperResolution)) {
 +    LOG(ERROR) << "NVIDIA VSR init: feature disabled";
 +    return false;
 +  }
@@ -1579,7 +1754,7 @@ index 0000000000..da64fd2d46
 +  job->request=std::move(request);
 +  job->result.status="not processed";
 +  auto cfg=nvvfx_vsr::SelectBrowserProcessorConfig(
-+      {job->request->visible_rect.width(),job->request->visible_rect.height()});
++      {job->request->visible_rect.width(),job->request->visible_rect.height()}, VsrTargetHeight());
 +  bool valid=!job->request->protected_video && !job->request->encrypted_track &&
 +      job->request->generation && job->request->frame_id && cfg &&
 +      cfg->quality==static_cast<int>(job->request->quality) &&
@@ -1615,7 +1790,7 @@ index 0000000000..da64fd2d46
 +    FinishSource(count);return;
 +  }
 +  auto cfg=*nvvfx_vsr::SelectBrowserProcessorConfig(
-+      {job.request->visible_rect.width(),job.request->visible_rect.height()});
++      {job.request->visible_rect.width(),job.request->visible_rect.height()}, VsrTargetHeight());
 +  // Native GL and Skia both mutate state outside Chromium's command decoder.
 +  context_->set_need_context_state_reset(true);
 +  // Prove publication backing capability before importing the source or SDK.
@@ -3029,16 +3204,16 @@ index 1a15973d0a..237dd2ddad 100644
      "//cc/paint",
 diff --git a/media/renderers/nvidia_vsr_frame_client.cc b/media/renderers/nvidia_vsr_frame_client.cc
 new file mode 100644
-index 0000000000..09d4350275
 --- /dev/null
 +++ b/media/renderers/nvidia_vsr_frame_client.cc
-@@ -0,0 +1,265 @@
+@@ -0,0 +1,275 @@
 +#include "media/renderers/nvidia_vsr_frame_client.h"
 +#include <optional>
++#include "base/command_line.h"
++#include "base/strings/string_number_conversions.h"
 +#include <vector>
 +#include "base/no_destructor.h"
 +#include "base/synchronization/lock.h"
-+#include "base/strings/string_number_conversions.h"
 +#include "base/feature_list.h"
 +#include "base/functional/bind.h"
 +#include "base/task/bind_post_task.h"
@@ -3054,6 +3229,14 @@ index 0000000000..09d4350275
 +#include "media/base/video_types.h"
 +namespace media {
 +namespace {
++int VsrTargetHeight() {
++  const auto* command = base::CommandLine::ForCurrentProcess();
++  if (!command->HasSwitch("nvidia-vsr-target-height")) return -1;
++  int height = 0;
++  if (!base::StringToInt(command->GetSwitchValueASCII("nvidia-vsr-target-height"), &height)) return 0;
++  return height == 1080 || height == 1440 || height == 2160 ? height : 0;
++}
++
 +struct QuarantinedSourceFrames {
 +  base::Lock lock;
 +  std::vector<scoped_refptr<VideoFrame>> frames;
@@ -3125,6 +3308,7 @@ index 0000000000..09d4350275
 +bool NvidiaVsrFrameClient::Observe(scoped_refptr<VideoFrame> frame,
 +                                   bool encrypted_track,uint64_t generation) {
 +  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
++  if (VsrTargetHeight() == 0) return false;
 +  const auto reason=ClassifyNvidiaVsrFrame(*frame,encrypted_track);
 +  std::string descriptor="format="+VideoPixelFormatToString(frame->format())+
 +      " visible="+frame->visible_rect().ToString()+
@@ -3190,7 +3374,7 @@ index 0000000000..09d4350275
 +}
 +bool NvidiaVsrFrameClient::Submit(scoped_refptr<VideoFrame> frame,uint64_t generation) {
 +  auto cfg=nvvfx_vsr::SelectBrowserProcessorConfig(
-+      {frame->visible_rect().width(),frame->visible_rect().height()});
++      {frame->visible_rect().width(),frame->visible_rect().height()}, VsrTargetHeight());
 +  if(!cfg) return false;
 +  const gfx::Size output_size(cfg->output.width,cfg->output.height);
 +  const gfx::ColorSpace rgb=frame->ColorSpace().GetAsFullRangeRGB();
@@ -5011,10 +5195,9 @@ index 0000000000..2f5dd1d60a
 +}
 diff --git a/third_party/nvidia_vsr/include/nvvfx_vsr/processor_config.h b/third_party/nvidia_vsr/include/nvvfx_vsr/processor_config.h
 new file mode 100644
-index 0000000000..8041f7d6d0
 --- /dev/null
 +++ b/third_party/nvidia_vsr/include/nvvfx_vsr/processor_config.h
-@@ -0,0 +1,19 @@
+@@ -0,0 +1,20 @@
 +#pragma once
 +#include "nvvfx_vsr/dimensions.h"
 +#include <optional>
@@ -5029,7 +5212,8 @@ index 0000000000..8041f7d6d0
 +std::optional<ProcessorConfig> SelectProcessorConfig(Dimensions input,
 +                                                    Dimensions target);
 +// Browser-only output preset; source eligibility remains limited to 1080p.
-+std::optional<ProcessorConfig> SelectBrowserProcessorConfig(Dimensions input);
++std::optional<ProcessorConfig> SelectBrowserProcessorConfig(Dimensions input,
++                                                            int target_height = -1);
 +// Shared by pre-sandbox broker/preload and GPU worker. Invalid overrides fail closed.
 +std::optional<std::string> ResolveSdkRoot(const std::string& compiled_default);
 +bool ValidProcessorConfig(const ProcessorConfig& config);
@@ -5335,10 +5519,9 @@ index 0000000000..b7974d5856
 +}
 diff --git a/third_party/nvidia_vsr/src/processor_config.cpp b/third_party/nvidia_vsr/src/processor_config.cpp
 new file mode 100644
-index 0000000000..64a1d4f69a
 --- /dev/null
 +++ b/third_party/nvidia_vsr/src/processor_config.cpp
-@@ -0,0 +1,52 @@
+@@ -0,0 +1,59 @@
 +#include "nvvfx_vsr/processor_config.h"
 +#include <algorithm>
 +#include <cmath>
@@ -5379,9 +5562,16 @@ index 0000000000..64a1d4f69a
 +  return normalized;
 +}
 +
-+std::optional<ProcessorConfig> SelectBrowserProcessorConfig(Dimensions input) {
++std::optional<ProcessorConfig> SelectBrowserProcessorConfig(Dimensions input, int target_height) {
 +  // Preserve the source cap and fail closed to the previous output preset.
 +  if(input.width>1920 || input.height>1080) return std::nullopt;
++  if(target_height != -1) {
++    if(target_height != 1080 && target_height != 1440 && target_height != 2160)
++      return std::nullopt;
++    const Dimensions target=target_height == 2160 ? Dimensions{3840,2160} :
++        target_height == 1440 ? Dimensions{2560,1440} : Dimensions{1920,1080};
++    return SelectProcessorConfig(input,target);
++  }
 +  const char* value=std::getenv("NVVFX_VSR_TARGET_HEIGHT");
 +  const Dimensions target=value && std::strcmp(value,"2160")==0 ?
 +      Dimensions{3840,2160} :

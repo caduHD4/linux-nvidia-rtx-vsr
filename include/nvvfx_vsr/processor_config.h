@@ -12,7 +12,8 @@ struct ProcessorConfig {
 std::optional<ProcessorConfig> SelectProcessorConfig(Dimensions input,
                                                     Dimensions target);
 // Browser-only output preset; source eligibility remains limited to 1080p.
-std::optional<ProcessorConfig> SelectBrowserProcessorConfig(Dimensions input);
+std::optional<ProcessorConfig> SelectBrowserProcessorConfig(Dimensions input,
+                                                            int target_height = -1);
 // Shared by pre-sandbox broker/preload and GPU worker. Invalid overrides fail closed.
 std::optional<std::string> ResolveSdkRoot(const std::string& compiled_default);
 bool ValidProcessorConfig(const ProcessorConfig& config);

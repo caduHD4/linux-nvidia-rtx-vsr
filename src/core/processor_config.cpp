@@ -38,9 +38,16 @@ std::optional<std::string> ResolveSdkRoot(const std::string& compiled_default) {
   return normalized;
 }
 
-std::optional<ProcessorConfig> SelectBrowserProcessorConfig(Dimensions input) {
+std::optional<ProcessorConfig> SelectBrowserProcessorConfig(Dimensions input, int target_height) {
   // Preserve the source cap and fail closed to the previous output preset.
   if(input.width>1920 || input.height>1080) return std::nullopt;
+  if(target_height != -1) {
+    if(target_height != 1080 && target_height != 1440 && target_height != 2160)
+      return std::nullopt;
+    const Dimensions target=target_height == 2160 ? Dimensions{3840,2160} :
+        target_height == 1440 ? Dimensions{2560,1440} : Dimensions{1920,1080};
+    return SelectProcessorConfig(input,target);
+  }
   const char* value=std::getenv("NVVFX_VSR_TARGET_HEIGHT");
   const Dimensions target=value && std::strcmp(value,"2160")==0 ?
       Dimensions{3840,2160} :

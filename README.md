@@ -23,14 +23,14 @@ These screenshots are captured at display resolution. Click an image to view ful
 
 ## Install the preview
 
-Download the Linux archive and checksum from [Releases](https://github.com/caduHD4/linux-nvidia-rtx-vsr/releases).
+Download the Chromium or [Brave preview](https://github.com/caduHD4/linux-nvidia-rtx-vsr/releases/tag/brave-v0.1.0-preview.1) archive and checksum from [Releases](https://github.com/caduHD4/linux-nvidia-rtx-vsr/releases).
 Install the NVIDIA SDK below, then extract the browser archive and run:
 
 ```bash
 python3 install.py --sdk "$HOME/.local/opt/nvidia-vfx/VideoFX"
 ```
 
-Open **Chromium RTX VSR (Experimental)** from your app menu. No browser build or
+Open **Chromium RTX VSR (Experimental)** or **Brave RTX VSR (Experimental)** from your app menu. No browser build or
 root access is needed. See [installation details](docs/distribution.md).
 
 ## Requirements

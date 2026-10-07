@@ -38,6 +38,16 @@ int main() {
       Check(safe && safe->quality==11 && safe->output.width==1920 && safe->output.height==1080,
             "disabled or unknown target must retain native denoise");
     }
+    setenv("NVVFX_VSR_TARGET_HEIGHT","1440",1);
+    Check(!SelectBrowserProcessorConfig({1280,720},0),"Off must bypass even with enabled environment");
+    for(int height:{1080,1440,2160}) {
+      auto explicit_config=SelectBrowserProcessorConfig({1280,720},height);
+      Check(explicit_config && explicit_config->output.height==height,
+            "explicit browser setting must override environment");
+    }
+    for(int invalid:{-2,1,720,4320})
+      Check(!SelectBrowserProcessorConfig({1280,720},invalid),"invalid explicit quality must bypass");
+    Check(!SelectBrowserProcessorConfig({2560,1440},2160),"explicit target must preserve source cap");
     unsetenv("NVVFX_VSR_TARGET_HEIGHT");
     auto up = SelectProcessorConfig({1280,720}, {1920,1080});
     Check(up && up->quality == 4 && up->strength == 1.0F &&

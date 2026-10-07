@@ -6,9 +6,9 @@
 **Spec:** docs/specs/2026-10-07-brave-vsr-quality-settings.md
 
 - [x] Publish and verify the current tested browser as a separate baseline release.
-- [ ] Add failing core tests for explicit target, disabled, invalid and environment precedence; implement and run.
-- [ ] Register/allowlist preference; add native Settings > System selector and restart control. Snapshot and forward preference to renderer/GPU; consume in both config paths.
-- [ ] Export incremental quality patch and integrate pinned apply tooling; run Python regressions.
-- [ ] Start bounded incremental Brave build and show terminal log. Validate UI persistence, disabled bypass and enabled playback.
+- [x] Add failing core tests for explicit target, disabled, invalid and environment precedence; implement and run.
+- [x] Register/allowlist preference; add native Settings > System selector and restart control. Snapshot and forward preference to renderer/GPU; consume in both config paths.
+- [x] Export quality changes into the complete atomic patch and verify pinned apply tooling; run Python regressions.
+- [x] Start bounded incremental Brave build and show terminal log. Validate UI persistence, disabled bypass and enabled playback.
 
 Maintain all previous safety and fullscreen gates. No live mutation of active inference buffers.

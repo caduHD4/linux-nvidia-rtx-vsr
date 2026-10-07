@@ -57,6 +57,43 @@ class BraveApplyTests(unittest.TestCase):
         self.assertEqual(self.run_git('diff').stdout, before)
         self.assertEqual((self.source / 'one').read_text(), 'original\n')
 
+    def make_upgrade(self):
+        apply.apply_patch(self.source, self.patch)
+        for name in ('one', 'two'):
+            (self.source / name).write_text('quality settings\n')
+        complete = Path(self.temp.name) / 'complete.patch'
+        complete.write_text(self.run_git('diff').stdout)
+        self.run_git('restore', '.')
+        apply.apply_patch(self.source, self.patch)
+        self.run_git('add', '.')
+        self.run_git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid',
+                     'commit', '-qm', 'baseline')
+        for name in ('one', 'two'):
+            (self.source / name).write_text('quality settings\n')
+        upgrade = Path(self.temp.name) / 'upgrade.patch'
+        upgrade.write_text(self.run_git('diff').stdout)
+        self.run_git('restore', '.')
+        return complete, upgrade
+
+    def test_baseline_upgrade_and_repeat(self):
+        complete, upgrade = self.make_upgrade()
+        self.assertEqual(apply.apply_complete_patch(self.source, complete, upgrade), 'upgraded')
+        self.assertEqual((self.source/'one').read_text(), 'quality settings\n')
+        self.assertEqual(apply.apply_complete_patch(self.source, complete, upgrade), 'already applied')
+
+    def test_upgrade_corrupt_baseline_leaves_all_files_unchanged(self):
+        complete, upgrade = self.make_upgrade()
+        # A full-patch-only third file proves migration validates the entire base,
+        # not just the files changed by the incremental update.
+        complete.write_text(complete.read_text()+
+            'diff --git a/three b/three\n--- a/three\n+++ b/three\n@@ -1 +1 @@\n-old\n+baseline\n')
+        (self.source/'three').write_text('corrupt baseline\n')
+        before = self.run_git('diff').stdout
+        with self.assertRaises(RuntimeError):
+            apply.apply_complete_patch(self.source, complete, upgrade)
+        self.assertEqual(self.run_git('diff').stdout, before)
+        self.assertEqual((self.source/'one').read_text(), 'enhanced\n')
+
     def test_wrong_chromium_pin_rejected(self):
         with self.assertRaisesRegex(RuntimeError, 'Chromium HEAD'):
             apply.validate_source(self.source, {'chromium_revision': '0' * 40})

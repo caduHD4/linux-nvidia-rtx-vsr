@@ -405,3 +405,37 @@ subjective acceptance, not a controlled performance benchmark; no PGO,
 non-component build or passthrough decoder improvement is claimed.
 Publication regression check: Python 48/48 passed. NVIDIA SDK and build outputs
 remain external.
+
+## 2026-10-07 — Brave baseline release and native quality settings
+
+Published `brave-v0.1.0-preview.1` at project commit c797aee, preserving the
+user-approved browser before quality-setting changes. The 389,598,225-byte
+archive and SHA256 asset are uploaded. Package prerequisite check passed;
+relocated 1080p30→4K playback selected 480 enhanced frames with continuous
+post-warmup windows, and fullscreen exit decoded another 180 frames with zero
+new enhanced-selection events. SDK and profiles were excluded.
+
+Added Linux Settings > System selector Off/1080p/1440p/4K. Local-state preference
+is snapshotted once for the session and propagated identically to renderer and
+GPU. Apply via the existing Restart Brave action. First-launch environment
+preset initializes the preference; later saved UI settings take precedence.
+Off bypasses before renderer GPU connection and independently at GPU initialize.
+Explicit invalid targets bypass. The existing fullscreen, protected/HDR and
+1080p-source restrictions remain.
+
+Initial incremental build: 27 steps / 48.02s. Startup testing exposed an early
+zygote callback reading browser prefs before initialization; restricting preference
+access to initialized renderer/GPU launches fixed it (3 steps / 23.29s).
+Final Off-gate refinement and UI resource build: 13 steps / 25.37s.
+Native UI/persistence tests exercised 2160→1440→0→2160 across fresh launches;
+renderer and GPU switches matched the prior session snapshot even after changing
+the saved preference. Core explicit-target tests and Python 50/50 passed.
+Playback checks passed Off (no enhanced selections) and 1080/1440/2160, each
+enabled mode selecting 480 enhanced frames with continuity and fullscreen exit.
+A separate code review found the baseline-checkout migration gap; a simulated
+full-patch-verified atomic upgrade now handles it, with corrupt-base no-mutation
+regressions and a real published-baseline migration check. Follow-up review
+reported no important remaining finding. The log terminal remains open.
+
+GPU sandbox inference remains unvalidated; the published baseline discloses
+the inactive GPU sandbox in its tested working mode. No security gate is claimed.

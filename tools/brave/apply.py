@@ -4,6 +4,8 @@ import argparse
 import json
 from pathlib import Path
 import subprocess
+import shutil
+import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -45,6 +47,40 @@ def apply_patch(source, patch):
                        + forward.stderr.strip())
 
 
+
+def apply_complete_patch(source, complete, upgrade):
+    """Accept pristine, complete, or verified baseline-only checkouts atomically."""
+    try:
+        return apply_patch(source, complete)
+    except RuntimeError as original_error:
+        # Validate the whole resulting patch on copies before touching a baseline.
+        # Checking the upgrade alone would miss corruption in unchanged VSR files.
+        with tempfile.TemporaryDirectory(prefix='brave-vsr-upgrade-') as temporary:
+            staged = Path(temporary)
+            git(staged, 'init', '-q')
+            for line in complete.read_text().splitlines():
+                if not line.startswith('diff --git '):
+                    continue
+                relative = Path(line.split(' b/', 1)[1])
+                if relative.is_absolute() or '..' in relative.parts:
+                    raise RuntimeError('Invalid patch path')
+                current = source / relative
+                if current.is_symlink():
+                    raise original_error
+                if current.is_file():
+                    destination = staged / relative
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(current, destination)
+            if git(staged, 'apply', '--check', str(upgrade)).returncode:
+                raise original_error
+            if git(staged, 'apply', str(upgrade)).returncode:
+                raise original_error
+            if git(staged, 'apply', '--reverse', '--check', str(complete)).returncode:
+                raise original_error
+        apply_patch(source, upgrade)
+        return 'upgraded'
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source', type=Path, required=True, help='Dedicated Brave Chromium src directory')
@@ -53,7 +89,8 @@ def main():
     pins = json.loads((ROOT / 'brave/version.json').read_text())
     try:
         validate_source(source, pins)
-        status = apply_patch(source, ROOT / 'brave/patches/nvidia-vsr.patch')
+        status = apply_complete_patch(source, ROOT / 'brave/patches/nvidia-vsr.patch',
+                                      ROOT / 'brave/patches/quality-settings-upgrade.patch')
     except RuntimeError as error:
         parser.exit(1, str(error) + '\n')
     print(f'Brave NVIDIA VSR delta {status}. Build and playback validation are still required.')
