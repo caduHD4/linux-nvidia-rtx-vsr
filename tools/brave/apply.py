@@ -53,32 +53,34 @@ def apply_complete_patch(source, complete, upgrade):
     try:
         return apply_patch(source, complete)
     except RuntimeError as original_error:
-        # Validate the whole resulting patch on copies before touching a baseline.
-        # Checking the upgrade alone would miss corruption in unchanged VSR files.
-        with tempfile.TemporaryDirectory(prefix='brave-vsr-upgrade-') as temporary:
-            staged = Path(temporary)
-            git(staged, 'init', '-q')
-            for line in complete.read_text().splitlines():
-                if not line.startswith('diff --git '):
+        candidates = [upgrade] if isinstance(upgrade, Path) else upgrade
+        for candidate in candidates:
+            # Validate the entire resulting tree, not just the incremental hunks.
+            with tempfile.TemporaryDirectory(prefix='brave-vsr-upgrade-') as temporary:
+                staged = Path(temporary)
+                git(staged, 'init', '-q')
+                for line in complete.read_text().splitlines():
+                    if not line.startswith('diff --git '):
+                        continue
+                    relative = Path(line.split(' b/', 1)[1])
+                    if relative.is_absolute() or '..' in relative.parts:
+                        raise RuntimeError('Invalid patch path')
+                    current = source / relative
+                    if current.is_symlink():
+                        raise original_error
+                    if current.is_file():
+                        destination = staged / relative
+                        destination.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(current, destination)
+                if git(staged, 'apply', '--check', str(candidate)).returncode:
                     continue
-                relative = Path(line.split(' b/', 1)[1])
-                if relative.is_absolute() or '..' in relative.parts:
-                    raise RuntimeError('Invalid patch path')
-                current = source / relative
-                if current.is_symlink():
-                    raise original_error
-                if current.is_file():
-                    destination = staged / relative
-                    destination.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(current, destination)
-            if git(staged, 'apply', '--check', str(upgrade)).returncode:
-                raise original_error
-            if git(staged, 'apply', str(upgrade)).returncode:
-                raise original_error
-            if git(staged, 'apply', '--reverse', '--check', str(complete)).returncode:
-                raise original_error
-        apply_patch(source, upgrade)
-        return 'upgraded'
+                if git(staged, 'apply', str(candidate)).returncode:
+                    continue
+                if git(staged, 'apply', '--reverse', '--check', str(complete)).returncode:
+                    continue
+            apply_patch(source, candidate)
+            return 'upgraded'
+        raise original_error
 
 
 def main():
@@ -90,7 +92,8 @@ def main():
     try:
         validate_source(source, pins)
         status = apply_complete_patch(source, ROOT / 'brave/patches/nvidia-vsr.patch',
-                                      ROOT / 'brave/patches/quality-settings-upgrade.patch')
+                                      [ROOT / 'brave/patches/quality-settings-upgrade.patch',
+                                       ROOT / 'brave/patches/image-controls-upgrade.patch'])
     except RuntimeError as error:
         parser.exit(1, str(error) + '\n')
     print(f'Brave NVIDIA VSR delta {status}. Build and playback validation are still required.')

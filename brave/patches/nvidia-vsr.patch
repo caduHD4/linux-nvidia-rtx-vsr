@@ -9,7 +9,7 @@ diff --git a/brave/browser/brave_content_browser_client.cc b/brave/browser/brave
  #include "base/system/sys_info.h"
  #include "brave/browser/bluetooth/brave_bluetooth_delegate.h"
  #include "brave/browser/brave_account/brave_account_navigation_throttle.h"
-@@ -1122,6 +1123,32 @@
+@@ -1122,6 +1123,50 @@
    ChromeContentBrowserClient::AppendExtraCommandLineSwitches(command_line,
                                                               child_process_id);
  
@@ -36,6 +36,24 @@ diff --git a/brave/browser/brave_content_browser_client.cc b/brave/browser/brave
 +    return height == 1080 || height == 1440 || height == 2160 ? height : 0;
 +  }();
 +  command_line->AppendSwitchASCII("nvidia-vsr-target-height", base::NumberToString(vsr_target_height));
++  static const int vsr_sharpness = [] {
++    PrefService* prefs = g_browser_process->local_state();
++    if (prefs->FindPreference("brave.nvidia_vsr_sharpness")->IsDefaultValue()) {
++      auto setting = base::Environment::Create()->GetVar("NVVFX_VSR_SHARPNESS");
++      double value = 0.35;
++      if (setting && base::StringToDouble(*setting, &value) && value >= 0 && value <= 1)
++        prefs->SetInteger("brave.nvidia_vsr_sharpness", static_cast<int>(value * 100 + 0.5));
++    }
++    int value = prefs->GetInteger("brave.nvidia_vsr_sharpness");
++    return value >= 0 && value <= 100 ? value : -2;
++  }();
++  static const int vsr_denoise = [] {
++    int value = g_browser_process->local_state()->GetInteger("brave.nvidia_vsr_denoise");
++    return value >= 8 && value <= 11 ? value : -2;
++  }();
++  command_line->AppendSwitchASCII("nvidia-vsr-sharpness", base::NumberToString(vsr_sharpness));
++  command_line->AppendSwitchASCII("nvidia-vsr-denoise", base::NumberToString(vsr_denoise));
++
 +  }
 +#endif
 +
@@ -45,12 +63,14 @@ diff --git a/brave/browser/brave_content_browser_client.cc b/brave/browser/brave
 diff --git a/brave/browser/brave_local_state_prefs.cc b/brave/browser/brave_local_state_prefs.cc
 --- a/brave/browser/brave_local_state_prefs.cc
 +++ b/brave/browser/brave_local_state_prefs.cc
-@@ -170,6 +170,9 @@
+@@ -170,6 +170,11 @@
  }
  
  void RegisterLocalStatePrefs(PrefRegistrySimple* registry) {
 +#if BUILDFLAG(IS_LINUX)
 +  registry->RegisterIntegerPref("brave.nvidia_vsr_target_height", 2160);
++  registry->RegisterIntegerPref("brave.nvidia_vsr_sharpness", 35);
++  registry->RegisterIntegerPref("brave.nvidia_vsr_denoise", 11);
 +#endif
    brave_shields::RegisterPrefsForAdBlockService(registry);
    // `kStatsReportingEnabled` is the user/policy-facing opt-in for anonymous
@@ -58,12 +78,14 @@ diff --git a/brave/browser/brave_local_state_prefs.cc b/brave/browser/brave_loca
 diff --git a/brave/browser/extensions/api/settings_private/brave_prefs_util.cc b/brave/browser/extensions/api/settings_private/brave_prefs_util.cc
 --- a/brave/browser/extensions/api/settings_private/brave_prefs_util.cc
 +++ b/brave/browser/extensions/api/settings_private/brave_prefs_util.cc
-@@ -118,6 +118,9 @@
+@@ -118,6 +118,11 @@
    // Start with parent class allowlist
    const auto chromium_prefs = PrefsUtil::GetAllowlistedKeys();
    s_brave_allowlist->insert(chromium_prefs.begin(), chromium_prefs.end());
 +#if BUILDFLAG(IS_LINUX)
 +  (*s_brave_allowlist)["brave.nvidia_vsr_target_height"] = settings_api::PrefType::kNumber;
++  (*s_brave_allowlist)["brave.nvidia_vsr_sharpness"] = settings_api::PrefType::kNumber;
++  (*s_brave_allowlist)["brave.nvidia_vsr_denoise"] = settings_api::PrefType::kNumber;
 +#endif
    // Add Brave values to the allowlist
    // import data
@@ -71,7 +93,7 @@ diff --git a/brave/browser/extensions/api/settings_private/brave_prefs_util.cc b
 diff --git a/brave/chromium_src/chrome/browser/resources/settings/system_page/system_page.html.ts.lit_mangler.ts b/brave/chromium_src/chrome/browser/resources/settings/system_page/system_page.html.ts.lit_mangler.ts
 --- a/brave/chromium_src/chrome/browser/resources/settings/system_page/system_page.html.ts.lit_mangler.ts
 +++ b/brave/chromium_src/chrome/browser/resources/settings/system_page/system_page.html.ts.lit_mangler.ts
-@@ -33,6 +33,24 @@
+@@ -33,6 +33,47 @@
          @click="\${this.onShortcutsClick_}">
       </cr-link-row>`)
  
@@ -84,13 +106,36 @@ diff --git a/brave/chromium_src/chrome/browser/resources/settings/system_page/sy
 +         <div role="status">\${this.vsrError_}</div>
 +       </div>
 +       <select id="nvidiaVsrQuality" aria-label="RTX Video Super Resolution quality"
-+           ?disabled="\${!this.vsrLoaded_}" @change="\${this.onVsrQualityChange_}">
++           ?disabled="\${!this.vsrLoaded_ || this.vsrSaving_}" @change="\${this.onVsrQualityChange_}">
 +         <option value="0" ?selected="\${this.vsrTargetHeight_ === 0}">Off</option>
 +         <option value="1080" ?selected="\${this.vsrTargetHeight_ === 1080}">1080p</option>
 +         <option value="1440" ?selected="\${this.vsrTargetHeight_ === 1440}">1440p</option>
 +         <option value="2160" ?selected="\${this.vsrTargetHeight_ === 2160}">4K</option>
 +       </select>
-+       <cr-button id="nvidiaVsrRestart" @click="\${this.onRestartClick_}">Restart Brave</cr-button>
++       <cr-button id="nvidiaVsrRestart" ?disabled="\${!this.vsrLoaded_ || this.vsrSaving_}"
++           @click="\${this.onRestartClick_}">Restart Brave</cr-button>
++     </div>
++     <div class="settings-box" ?hidden="\${!this.vsrIsLinux_}">
++       <div class="start"><label for="nvidiaVsrSharpness">Sharpness</label>
++         <div class="secondary">0 disables extra sharpening. Default: 35.</div></div>
++       <input id="nvidiaVsrSharpness" type="range" min="0" max="100" step="1"
++           aria-label="Extra video sharpness" .value="\${String(this.vsrSharpness_)}"
++           ?disabled="\${!this.vsrLoaded_ || this.vsrSaving_}"
++           @change="\${this.onVsrSharpnessChange_}">
++       <span>\${this.vsrSharpness_}%</span>
++     </div>
++     <div class="settings-box" ?hidden="\${!this.vsrIsLinux_}">
++       <div class="start"><label for="nvidiaVsrDenoise">Native-resolution denoise</label>
++         <div class="secondary">Applies when video is not upscaled. Upscaling uses VSR Ultra.</div></div>
++       <select id="nvidiaVsrDenoise" aria-label="Native-resolution denoise level"
++           ?disabled="\${!this.vsrLoaded_ || this.vsrSaving_}" @change="\${this.onVsrDenoiseChange_}">
++         <option value="8" ?selected="\${this.vsrDenoise_ === 8}">Low</option>
++         <option value="9" ?selected="\${this.vsrDenoise_ === 9}">Medium</option>
++         <option value="10" ?selected="\${this.vsrDenoise_ === 10}">High</option>
++         <option value="11" ?selected="\${this.vsrDenoise_ === 11}">Ultra</option>
++       </select>
++       <cr-button id="nvidiaVsrReset" ?disabled="\${!this.vsrLoaded_ || this.vsrSaving_}"
++           @click="\${this.onVsrResetClick_}">Restore defaults</cr-button>
 +     </div>`)
 +
    // Note: browser.confirm_to_quit isn't registered as a pref outside of mac
@@ -108,10 +153,18 @@ diff --git a/brave/chromium_src/chrome/browser/resources/settings/system_page/sy
  
  import { loadTimeData } from '../i18n_setup.js'
  import { routes } from '../route.js'
-@@ -18,6 +18,11 @@
+@@ -18,6 +18,19 @@
  // via the upstream system_page.html.ts import) type-checks.
  declare module './system_page-chromium.js' {
    interface SettingsSystemPageElement {
++    loadVsrSettings_(): Promise<void>
++    saveVsrSettings_(values: Array<[string, number]>): Promise<void>
++    vsrSharpness_: number
++    vsrDenoise_: number
++    vsrSaving_: boolean
++    onVsrSharpnessChange_(event: Event): Promise<void>
++    onVsrDenoiseChange_(event: Event): Promise<void>
++    onVsrResetClick_(): Promise<void>
 +    vsrTargetHeight_: number
 +    vsrLoaded_: boolean
 +    vsrIsLinux_: boolean
@@ -120,10 +173,13 @@ diff --git a/brave/chromium_src/chrome/browser/resources/settings/system_page/sy
      shortcutsSupported_: boolean
      isMac_: boolean
      warnBeforeQuittingLabel_: string
-@@ -29,9 +34,42 @@
+@@ -29,10 +42,94 @@
    static override get properties() {
      return {
        ...super.properties,
++      vsrSharpness_: { type: Number },
++      vsrDenoise_: { type: Number },
++      vsrSaving_: { type: Boolean },
 +      vsrTargetHeight_: { type: Number },
 +      vsrLoaded_: { type: Boolean },
 +      vsrIsLinux_: { type: Boolean },
@@ -131,9 +187,12 @@ diff --git a/brave/chromium_src/chrome/browser/resources/settings/system_page/sy
        shortcutsSupported_: { type: Boolean },
        isMac_: { type: Boolean },
        warnBeforeQuittingLabel_: { type: String },
-+    }
+     }
 +  }
 +
++  override accessor vsrSharpness_: number = 35
++  override accessor vsrDenoise_: number = 11
++  override accessor vsrSaving_: boolean = false
 +  override accessor vsrTargetHeight_: number = 2160
 +  override accessor vsrLoaded_: boolean = false
 +  override accessor vsrIsLinux_: boolean = isLinux
@@ -142,27 +201,73 @@ diff --git a/brave/chromium_src/chrome/browser/resources/settings/system_page/sy
 +  override connectedCallback() {
 +    super.connectedCallback()
 +    if (isLinux) {
-+      chrome.settingsPrivate.getPref('brave.nvidia_vsr_target_height').then(pref => {
-+        this.vsrTargetHeight_ = Number(pref.value)
-+        this.vsrLoaded_ = true
-+      }).catch(() => { this.vsrError_ = 'Could not load VSR settings.' })
++      this.loadVsrSettings_().catch(() => {
++        this.vsrError_ = 'Could not load VSR settings.'
++      })
++    }
++  }
++
++  override async loadVsrSettings_() {
++    const [target, sharpness, denoise] = await Promise.all([
++      chrome.settingsPrivate.getPref('brave.nvidia_vsr_target_height'),
++      chrome.settingsPrivate.getPref('brave.nvidia_vsr_sharpness'),
++      chrome.settingsPrivate.getPref('brave.nvidia_vsr_denoise'),
++    ])
++    this.vsrTargetHeight_ = Number(target.value)
++    this.vsrSharpness_ = Number(sharpness.value)
++    this.vsrDenoise_ = Number(denoise.value)
++    this.vsrLoaded_ = true
++  }
++
++  override async saveVsrSettings_(values: Array<[string, number]>) {
++    this.vsrSaving_ = true
++    try {
++      for (const [key, value] of values) {
++        if (!await chrome.settingsPrivate.setPref(key, value)) {
++          throw new Error('Preference rejected')
++        }
++      }
++      this.vsrError_ = ''
++    } catch {
++      this.vsrError_ = 'Could not save all VSR settings. Review the values and try again.'
++    } finally {
++      try { await this.loadVsrSettings_() } catch {
++        this.vsrError_ = 'Could not reload VSR settings.'
++      }
++      this.vsrSaving_ = false
 +    }
 +  }
 +
 +  override async onVsrQualityChange_(event: Event) {
-+    const height = Number((event.target as HTMLSelectElement).value)
-+    if (![0, 1080, 1440, 2160].includes(height)) return
-+    try {
-+      const saved = await chrome.settingsPrivate.setPref('brave.nvidia_vsr_target_height', height)
-+      if (!saved) throw new Error('Preference rejected')
-+      this.vsrTargetHeight_ = height
-+      this.vsrError_ = ''
-+    } catch {
-+      (event.target as HTMLSelectElement).value = String(this.vsrTargetHeight_)
-+      this.vsrError_ = 'Could not save VSR settings.'
-     }
++    const value = Number((event.target as HTMLSelectElement).value)
++    if ([0, 1080, 1440, 2160].includes(value)) {
++      await this.saveVsrSettings_([['brave.nvidia_vsr_target_height', value]])
++    }
++  }
++
++  override async onVsrSharpnessChange_(event: Event) {
++    const value = Number((event.target as HTMLInputElement).value)
++    if (Number.isInteger(value) && value >= 0 && value <= 100) {
++      await this.saveVsrSettings_([['brave.nvidia_vsr_sharpness', value]])
++    }
++  }
++
++  override async onVsrDenoiseChange_(event: Event) {
++    const value = Number((event.target as HTMLSelectElement).value)
++    if ([8, 9, 10, 11].includes(value)) {
++      await this.saveVsrSettings_([['brave.nvidia_vsr_denoise', value]])
++    }
++  }
++
++  override async onVsrResetClick_() {
++    await this.saveVsrSettings_([
++      ['brave.nvidia_vsr_target_height', 2160],
++      ['brave.nvidia_vsr_sharpness', 35],
++      ['brave.nvidia_vsr_denoise', 11],
++    ])
    }
  
+   override accessor shortcutsSupported_: boolean =
 diff --git a/content/common/BUILD.gn b/content/common/BUILD.gn
 index 7af4d8bb34..b28bb0f31f 100644
 --- a/content/common/BUILD.gn
@@ -1561,7 +1666,7 @@ diff --git a/gpu/ipc/service/nvidia_vsr_gpu_service.cc b/gpu/ipc/service/nvidia_
 new file mode 100644
 --- /dev/null
 +++ b/gpu/ipc/service/nvidia_vsr_gpu_service.cc
-@@ -0,0 +1,494 @@
+@@ -0,0 +1,507 @@
 +#include "gpu/ipc/service/nvidia_vsr_gpu_service.h"
 +#include <optional>
 +#include "base/command_line.h"
@@ -1602,6 +1707,17 @@ new file mode 100644
 +#include "ui/gl/init/gl_factory.h"
 +namespace gpu {
 +namespace {
++int VsrIntegerSetting(const char* name, int fallback) {
++  const auto* command = base::CommandLine::ForCurrentProcess();
++  if (!command->HasSwitch(name)) return fallback;
++  int value = -2;
++  return base::StringToInt(command->GetSwitchValueASCII(name), &value) ? value : -2;
++}
++float VsrSharpness() {
++  if (!base::CommandLine::ForCurrentProcess()->HasSwitch("nvidia-vsr-sharpness")) return -1.0F;
++  const int percent = VsrIntegerSetting("nvidia-vsr-sharpness", -2);
++  return percent >= 0 && percent <= 100 ? percent / 100.0F : -2.0F;
++}
 +int VsrTargetHeight() {
 +  const auto* command = base::CommandLine::ForCurrentProcess();
 +  if (!command->HasSwitch("nvidia-vsr-target-height")) return -1;
@@ -1754,7 +1870,8 @@ new file mode 100644
 +  job->request=std::move(request);
 +  job->result.status="not processed";
 +  auto cfg=nvvfx_vsr::SelectBrowserProcessorConfig(
-+      {job->request->visible_rect.width(),job->request->visible_rect.height()}, VsrTargetHeight());
++      {job->request->visible_rect.width(),job->request->visible_rect.height()}, VsrTargetHeight(),
++      VsrIntegerSetting("nvidia-vsr-denoise", 11), VsrSharpness());
 +  bool valid=!job->request->protected_video && !job->request->encrypted_track &&
 +      job->request->generation && job->request->frame_id && cfg &&
 +      cfg->quality==static_cast<int>(job->request->quality) &&
@@ -1790,7 +1907,8 @@ new file mode 100644
 +    FinishSource(count);return;
 +  }
 +  auto cfg=*nvvfx_vsr::SelectBrowserProcessorConfig(
-+      {job.request->visible_rect.width(),job.request->visible_rect.height()}, VsrTargetHeight());
++      {job.request->visible_rect.width(),job.request->visible_rect.height()}, VsrTargetHeight(),
++      VsrIntegerSetting("nvidia-vsr-denoise", 11), VsrSharpness());
 +  // Native GL and Skia both mutate state outside Chromium's command decoder.
 +  context_->set_need_context_state_reset(true);
 +  // Prove publication backing capability before importing the source or SDK.
@@ -2147,7 +2265,6 @@ index 0000000000..0a718445e4
 +#endif
 diff --git a/gpu/ipc/service/nvidia_vsr_gpu_worker.cc b/gpu/ipc/service/nvidia_vsr_gpu_worker.cc
 new file mode 100644
-index 0000000000..e8e8148fdc
 --- /dev/null
 +++ b/gpu/ipc/service/nvidia_vsr_gpu_worker.cc
 @@ -0,0 +1,199 @@
@@ -2170,7 +2287,7 @@ index 0000000000..e8e8148fdc
 +                const nvvfx_vsr::ProcessorConfig& b) {
 +  return a.input.width==b.input.width && a.input.height==b.input.height &&
 +         a.output.width==b.output.width && a.output.height==b.output.height &&
-+         a.quality==b.quality && a.strength==b.strength;
++         a.quality==b.quality && a.strength==b.strength && a.sharpness==b.sharpness;
 +}
 +}
 +struct NvidiaVsrGpuWorker::Impl {
@@ -3206,7 +3323,7 @@ diff --git a/media/renderers/nvidia_vsr_frame_client.cc b/media/renderers/nvidia
 new file mode 100644
 --- /dev/null
 +++ b/media/renderers/nvidia_vsr_frame_client.cc
-@@ -0,0 +1,275 @@
+@@ -0,0 +1,287 @@
 +#include "media/renderers/nvidia_vsr_frame_client.h"
 +#include <optional>
 +#include "base/command_line.h"
@@ -3229,6 +3346,17 @@ new file mode 100644
 +#include "media/base/video_types.h"
 +namespace media {
 +namespace {
++int VsrIntegerSetting(const char* name, int fallback) {
++  const auto* command = base::CommandLine::ForCurrentProcess();
++  if (!command->HasSwitch(name)) return fallback;
++  int value = -2;
++  return base::StringToInt(command->GetSwitchValueASCII(name), &value) ? value : -2;
++}
++float VsrSharpness() {
++  if (!base::CommandLine::ForCurrentProcess()->HasSwitch("nvidia-vsr-sharpness")) return -1.0F;
++  const int percent = VsrIntegerSetting("nvidia-vsr-sharpness", -2);
++  return percent >= 0 && percent <= 100 ? percent / 100.0F : -2.0F;
++}
 +int VsrTargetHeight() {
 +  const auto* command = base::CommandLine::ForCurrentProcess();
 +  if (!command->HasSwitch("nvidia-vsr-target-height")) return -1;
@@ -3374,7 +3502,8 @@ new file mode 100644
 +}
 +bool NvidiaVsrFrameClient::Submit(scoped_refptr<VideoFrame> frame,uint64_t generation) {
 +  auto cfg=nvvfx_vsr::SelectBrowserProcessorConfig(
-+      {frame->visible_rect().width(),frame->visible_rect().height()}, VsrTargetHeight());
++      {frame->visible_rect().width(),frame->visible_rect().height()}, VsrTargetHeight(),
++      VsrIntegerSetting("nvidia-vsr-denoise", 11), VsrSharpness());
 +  if(!cfg) return false;
 +  const gfx::Size output_size(cfg->output.width,cfg->output.height);
 +  const gfx::ColorSpace rgb=frame->ColorSpace().GetAsFullRangeRGB();
@@ -5197,7 +5326,7 @@ diff --git a/third_party/nvidia_vsr/include/nvvfx_vsr/processor_config.h b/third
 new file mode 100644
 --- /dev/null
 +++ b/third_party/nvidia_vsr/include/nvvfx_vsr/processor_config.h
-@@ -0,0 +1,20 @@
+@@ -0,0 +1,23 @@
 +#pragma once
 +#include "nvvfx_vsr/dimensions.h"
 +#include <optional>
@@ -5208,12 +5337,15 @@ new file mode 100644
 +  Dimensions output;
 +  int quality;
 +  float strength = 1.0F;
++  float sharpness = -1.0F; // -1 preserves the legacy environment preset.
 +};
 +std::optional<ProcessorConfig> SelectProcessorConfig(Dimensions input,
 +                                                    Dimensions target);
 +// Browser-only output preset; source eligibility remains limited to 1080p.
 +std::optional<ProcessorConfig> SelectBrowserProcessorConfig(Dimensions input,
-+                                                            int target_height = -1);
++                                                            int target_height = -1,
++                                                            int denoise_quality = 11,
++                                                            float sharpness = -1.0F);
 +// Shared by pre-sandbox broker/preload and GPU worker. Invalid overrides fail closed.
 +std::optional<std::string> ResolveSdkRoot(const std::string& compiled_default);
 +bool ValidProcessorConfig(const ProcessorConfig& config);
@@ -5521,7 +5653,7 @@ diff --git a/third_party/nvidia_vsr/src/processor_config.cpp b/third_party/nvidi
 new file mode 100644
 --- /dev/null
 +++ b/third_party/nvidia_vsr/src/processor_config.cpp
-@@ -0,0 +1,59 @@
+@@ -0,0 +1,70 @@
 +#include "nvvfx_vsr/processor_config.h"
 +#include <algorithm>
 +#include <cmath>
@@ -5535,8 +5667,9 @@ new file mode 100644
 +}
 +bool ValidProcessorConfig(const ProcessorConfig& c) {
 +  if (!ValidSize(c.input) || !ValidSize(c.output) ||
-+      !std::isfinite(c.strength) || c.strength < 0 || c.strength > 1) return false;
-+  if (c.quality == 11) return c.input.width == c.output.width &&
++      !std::isfinite(c.strength) || c.strength < 0 || c.strength > 1 || !std::isfinite(c.sharpness) ||
++      (c.sharpness != -1 && (c.sharpness < 0 || c.sharpness > 1))) return false;
++  if (c.quality >= 8 && c.quality <= 11) return c.input.width == c.output.width &&
 +                             c.input.height == c.output.height;
 +  return c.quality == 4 && c.output.width > c.input.width &&
 +                          c.output.height > c.input.height;
@@ -5562,7 +5695,17 @@ new file mode 100644
 +  return normalized;
 +}
 +
-+std::optional<ProcessorConfig> SelectBrowserProcessorConfig(Dimensions input, int target_height) {
++std::optional<ProcessorConfig> SelectBrowserProcessorConfig(Dimensions input, int target_height,
++    int denoise_quality, float sharpness) {
++  if(denoise_quality < 8 || denoise_quality > 11 || !std::isfinite(sharpness) ||
++     (sharpness != -1 && (sharpness < 0 || sharpness > 1))) return std::nullopt;
++  auto select = [=](Dimensions target) -> std::optional<ProcessorConfig> {
++    auto config = SelectProcessorConfig(input,target);
++    if(!config) return std::nullopt;
++    if(config->quality == 11) config->quality = denoise_quality;
++    config->sharpness = sharpness;
++    return config;
++  };
 +  // Preserve the source cap and fail closed to the previous output preset.
 +  if(input.width>1920 || input.height>1080) return std::nullopt;
 +  if(target_height != -1) {
@@ -5570,23 +5713,22 @@ new file mode 100644
 +      return std::nullopt;
 +    const Dimensions target=target_height == 2160 ? Dimensions{3840,2160} :
 +        target_height == 1440 ? Dimensions{2560,1440} : Dimensions{1920,1080};
-+    return SelectProcessorConfig(input,target);
++    return select(target);
 +  }
 +  const char* value=std::getenv("NVVFX_VSR_TARGET_HEIGHT");
 +  const Dimensions target=value && std::strcmp(value,"2160")==0 ?
 +      Dimensions{3840,2160} :
 +      value && std::strcmp(value,"1440")==0 ?
 +      Dimensions{2560,1440} : Dimensions{1920,1080};
-+  return SelectProcessorConfig(input,target);
++  return select(target);
 +}
 +
 +}
 diff --git a/third_party/nvidia_vsr/src/vsr_processor.cpp b/third_party/nvidia_vsr/src/vsr_processor.cpp
 new file mode 100644
-index 0000000000..7508013a97
 --- /dev/null
 +++ b/third_party/nvidia_vsr/src/vsr_processor.cpp
-@@ -0,0 +1,296 @@
+@@ -0,0 +1,298 @@
 +#include "nvvfx_vsr/vsr_processor.h"
 +#include <cuda.h>
 +#include <nvCVImage.h>
@@ -5778,7 +5920,9 @@ index 0000000000..7508013a97
 +    stage="load effect";
 +    vfx(impl->NvVFX_Load_fn(impl->effect));
 +    // Read once on worker initialization. Zero/unset/invalid keeps exact VSR.
-+    if(const char* setting=std::getenv("NVVFX_VSR_SHARPNESS")) {
++    if(config.sharpness >= 0) {
++      impl->sharpness=config.sharpness;
++    } else if(const char* setting=std::getenv("NVVFX_VSR_SHARPNESS")) {
 +      char* end=nullptr;const float value=std::strtof(setting,&end);
 +      if(end!=setting && *end=='\0' && std::isfinite(value) && value>=0 && value<=1)
 +        impl->sharpness=value;

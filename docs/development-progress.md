@@ -439,3 +439,31 @@ reported no important remaining finding. The log terminal remains open.
 
 GPU sandbox inference remains unvalidated; the published baseline discloses
 the inactive GPU sandbox in its tested working mode. No security gate is claimed.
+
+## 2026-10-07 — Native sharpness, denoise and restore defaults
+
+Added integer post-sharpening 0–100 (default 35; zero skips the extra pass),
+native-resolution denoise Low/Medium/High/Ultra (SDK modes 8–11; default 11),
+and Restore defaults (2160/35/11) to Settings > System. Controls retain restart
+semantics and share the per-session child snapshot. Denoise is explicitly
+native-resolution-only: upscaling remains VSR Ultra, strength 1.0, without an
+extra denoise pass. Restore saves explicit defaults and reloads actual preference
+values after a partial/error save; restart is disabled during saving.
+
+ProcessorConfig carries validated explicit sharpness; -1 preserves the older
+environment path. GPU worker reuse compares sharpness too. Full patch plus
+verified migration candidates upgrade both published c797aee and selector
+1fa419a trees; both real-tree migrations and pristine/reverse checks passed.
+Core configuration tests and Python 51/51 passed. Initial build checks exposed
+TypeScript declaration-merge/private-helper and Lit click-handler naming errors;
+fixed both. Final incremental build passed in 42.84s / 14 steps.
+
+UI automation saved 1080/65/Low, restarted, restored 2160/35/Ultra, restarted
+again, and checked renderer/GPU snapshot switches each session. Native GPU
+playback confirmed mode8 1920x1080 output with post_sharpen0.65; 4K playback
+confirmed mode4 3840x2160 with post_sharpen0.00. Each selected 480 enhanced frames
+and passed post-warmup continuity plus fullscreen-exit checks.
+Reports: validation/brave-image-ui-report.json and brave-image-playback-summary.json
+on the build host (not committed). Independent review found no important issue;
+its minor slider-step inconsistency was fixed by using step1. The first binary
+release remains unchanged, and GPU sandbox inference remains unvalidated.

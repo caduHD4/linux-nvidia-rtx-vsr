@@ -17,7 +17,7 @@ bool SameConfig(const nvvfx_vsr::ProcessorConfig& a,
                 const nvvfx_vsr::ProcessorConfig& b) {
   return a.input.width==b.input.width && a.input.height==b.input.height &&
          a.output.width==b.output.width && a.output.height==b.output.height &&
-         a.quality==b.quality && a.strength==b.strength;
+         a.quality==b.quality && a.strength==b.strength && a.sharpness==b.sharpness;
 }
 }
 struct NvidiaVsrGpuWorker::Impl {

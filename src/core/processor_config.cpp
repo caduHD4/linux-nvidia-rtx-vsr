@@ -11,8 +11,9 @@ bool ValidSize(Dimensions d) { return d.width > 0 && d.height > 0 &&
 }
 bool ValidProcessorConfig(const ProcessorConfig& c) {
   if (!ValidSize(c.input) || !ValidSize(c.output) ||
-      !std::isfinite(c.strength) || c.strength < 0 || c.strength > 1) return false;
-  if (c.quality == 11) return c.input.width == c.output.width &&
+      !std::isfinite(c.strength) || c.strength < 0 || c.strength > 1 || !std::isfinite(c.sharpness) ||
+      (c.sharpness != -1 && (c.sharpness < 0 || c.sharpness > 1))) return false;
+  if (c.quality >= 8 && c.quality <= 11) return c.input.width == c.output.width &&
                              c.input.height == c.output.height;
   return c.quality == 4 && c.output.width > c.input.width &&
                           c.output.height > c.input.height;
@@ -38,7 +39,17 @@ std::optional<std::string> ResolveSdkRoot(const std::string& compiled_default) {
   return normalized;
 }
 
-std::optional<ProcessorConfig> SelectBrowserProcessorConfig(Dimensions input, int target_height) {
+std::optional<ProcessorConfig> SelectBrowserProcessorConfig(Dimensions input, int target_height,
+    int denoise_quality, float sharpness) {
+  if(denoise_quality < 8 || denoise_quality > 11 || !std::isfinite(sharpness) ||
+     (sharpness != -1 && (sharpness < 0 || sharpness > 1))) return std::nullopt;
+  auto select = [=](Dimensions target) -> std::optional<ProcessorConfig> {
+    auto config = SelectProcessorConfig(input,target);
+    if(!config) return std::nullopt;
+    if(config->quality == 11) config->quality = denoise_quality;
+    config->sharpness = sharpness;
+    return config;
+  };
   // Preserve the source cap and fail closed to the previous output preset.
   if(input.width>1920 || input.height>1080) return std::nullopt;
   if(target_height != -1) {
@@ -46,14 +57,14 @@ std::optional<ProcessorConfig> SelectBrowserProcessorConfig(Dimensions input, in
       return std::nullopt;
     const Dimensions target=target_height == 2160 ? Dimensions{3840,2160} :
         target_height == 1440 ? Dimensions{2560,1440} : Dimensions{1920,1080};
-    return SelectProcessorConfig(input,target);
+    return select(target);
   }
   const char* value=std::getenv("NVVFX_VSR_TARGET_HEIGHT");
   const Dimensions target=value && std::strcmp(value,"2160")==0 ?
       Dimensions{3840,2160} :
       value && std::strcmp(value,"1440")==0 ?
       Dimensions{2560,1440} : Dimensions{1920,1080};
-  return SelectProcessorConfig(input,target);
+  return select(target);
 }
 
 }

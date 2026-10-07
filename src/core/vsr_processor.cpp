@@ -189,7 +189,9 @@ std::unique_ptr<VsrProcessor> VsrProcessor::Create(const ProcessorConfig& config
     stage="load effect";
     vfx(impl->NvVFX_Load_fn(impl->effect));
     // Read once on worker initialization. Zero/unset/invalid keeps exact VSR.
-    if(const char* setting=std::getenv("NVVFX_VSR_SHARPNESS")) {
+    if(config.sharpness >= 0) {
+      impl->sharpness=config.sharpness;
+    } else if(const char* setting=std::getenv("NVVFX_VSR_SHARPNESS")) {
       char* end=nullptr;const float value=std::strtof(setting,&end);
       if(end!=setting && *end=='\0' && std::isfinite(value) && value>=0 && value<=1)
         impl->sharpness=value;

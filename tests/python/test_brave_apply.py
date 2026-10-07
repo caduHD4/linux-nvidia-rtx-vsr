@@ -81,6 +81,11 @@ class BraveApplyTests(unittest.TestCase):
         self.assertEqual((self.source/'one').read_text(), 'quality settings\n')
         self.assertEqual(apply.apply_complete_patch(self.source, complete, upgrade), 'already applied')
 
+    def test_upgrade_tries_verified_candidates(self):
+        complete, upgrade = self.make_upgrade()
+        self.assertEqual(apply.apply_complete_patch(self.source, complete, [self.patch, upgrade]), 'upgraded')
+        self.assertEqual((self.source/'two').read_text(), 'quality settings\n')
+
     def test_upgrade_corrupt_baseline_leaves_all_files_unchanged(self):
         complete, upgrade = self.make_upgrade()
         # A full-patch-only third file proves migration validates the entire base,

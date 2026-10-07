@@ -49,6 +49,19 @@ int main() {
       Check(!SelectBrowserProcessorConfig({1280,720},invalid),"invalid explicit quality must bypass");
     Check(!SelectBrowserProcessorConfig({2560,1440},2160),"explicit target must preserve source cap");
     unsetenv("NVVFX_VSR_TARGET_HEIGHT");
+    for(int mode:{8,9,10,11}) {
+      auto denoise=SelectBrowserProcessorConfig({1920,1080},1080,mode,0.65F);
+      Check(denoise && denoise->quality==mode && denoise->sharpness==0.65F,
+            "native denoise mode and sharpness must follow browser settings");
+      auto scale=SelectBrowserProcessorConfig({1280,720},2160,mode,0.0F);
+      Check(scale && scale->quality==4 && scale->strength==1.0F && scale->sharpness==0,
+            "upscaling must remain VSR Ultra and allow sharpening off");
+    }
+    Check(!SelectBrowserProcessorConfig({1920,1080},1080,7,0.35F),"reserved denoise mode must bypass");
+    for(float invalid:{-2.0F,1.01F})
+      Check(!SelectBrowserProcessorConfig({1280,720},2160,11,invalid),"invalid sharpness must bypass");
+    Check(!ValidProcessorConfig({{1280,720},{1920,1080},8,1.0F}),"denoise Low cannot upscale");
+    Check(!ValidProcessorConfig({{1280,720},{1920,1080},4,1.0F,2.0F}),"out-of-range sharpening must fail");
     auto up = SelectProcessorConfig({1280,720}, {1920,1080});
     Check(up && up->quality == 4 && up->strength == 1.0F &&
           up->output.width == 1920 && up->output.height == 1080,

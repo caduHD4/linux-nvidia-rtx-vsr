@@ -105,6 +105,16 @@ The existing launcher preset initializes new profiles. Once saved, the in-browse
 preference takes priority. The first published Brave binary preview predates this
 selector; its installer still chooses the preset through `--target`.
 
+### Image controls
+
+The same panel includes **Sharpness** (0–100; default 35), **Native-resolution
+denoise** (Low, Medium, High, Ultra; default Ultra), and **Restore defaults**.
+Restore defaults saves 4K / 35 / Ultra; click **Restart Brave** to apply.
+Sharpness 0 disables the extra sharpening pass. Denoise level applies only when
+input and output resolution match, such as 1080p video at the 1080p target.
+Upscaling keeps VSR Ultra; there is no separate denoise pass while upscaling.
+These controls are available in source builds after the first binary preview.
+
 ## Updates
 
 Update source pins deliberately, apply official Brave patches first, resolve VSR
