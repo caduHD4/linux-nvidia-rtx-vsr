@@ -30,8 +30,8 @@ Pinned Chromium b510e9d7cd3a2fbd78d0ddc42234103206c5f78d; SDK1.3.0.0; no proprie
 
 ### Task3: Source and release
 - [x] Update documentation, preserve published README commits, review tracked diff for secrets/artifacts.
-- [ ] Commit current integration and distribution tooling; push fast-forward.
-- [ ] If binary gates pass, upload prerelease archive and SHA256 with scoped installation instructions. Otherwise report blocker and source progress.
+- [x] Commit current integration and distribution tooling; pushed source snapshot 9724b70 fast-forward, preserving README history.
+- [x] Source progress published; binary withheld because secured NGX discovery is blocked. No GitHub browser Release created.
 
 Ruling: TSYNC alone exposed BrokerProcess::Fork single-thread DCHECK (2 threads). --gpu-sandbox-start-early alone still preloads VA-API first. Move broker creation before VA-API initialization, retain the same permissions and TSYNC policy; never remove the DCHECK. Evidence: validation/public-preview-sandbox-attempt.log and public-preview-early-sandbox.log.
 
@@ -40,3 +40,9 @@ seccomp scheduler filter10cases. Development 4K playback restored:480 enhanced
 selections/20sec, continuous after warmup. Public binary gate remains blocked;
 no archive upload or installable release claim. Diagnostic sandbox is explicit
 opt-in; no parent-path checks or ANGLE checks were removed.
+
+Final packaging check: external staging-preview-2-unvalidated contains987files,
+clean-source BUILD-INFO referencing public9724b70, no NVIDIA binaries or symlinks.
+SHA256SUMS verified; actual package installed/uninstalled in temporary XDG paths
+with spaces and launch.py --check passed. No secured playback claim follows from
+that prerequisite check. Relocated-package playback remains an open release gate.

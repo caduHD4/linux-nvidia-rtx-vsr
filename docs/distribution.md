@@ -31,6 +31,9 @@ python3 tools/release/package.py --source /path/to/chromium/src \
   --version 0.1.0-preview.1 --credits /external/path/credits.html
 ```
 
+When publishing a snapshot from a different local Git history, use
+`--project-revision <public-commit>`; its tree must exactly match local HEAD.
+
 Output must remain outside the source repository. It contains browser executables, component libraries/resources, project/Chromium license notices, generated credits, scripts and SHA256SUMS. It excludes NVIDIA SDK, profiles and generated test videos. Compress the resulting directory and generate a SHA256 for the archive. Each GitHub release asset must remain below 2 GiB.
 
 ## Release gates
