@@ -23,6 +23,10 @@ bool JobAdmission::Start(std::size_t slot,std::uint64_t now_ms) {
   for(const auto& other:slots_) if(other.state==State::Running) return false;
   slots_[slot].state=State::Running;slots_[slot].started_ms=now_ms;return true;
 }
+bool JobAdmission::FinishInference(std::size_t slot) {
+  if(slot>=slots_.size() || slots_[slot].state!=State::Running) return false;
+  slots_[slot].state=State::Publishing;return true;
+}
 bool JobAdmission::CompleteSafely(std::size_t slot) {
   if(slot>=slots_.size() || slots_[slot].state==State::Free ||
      slots_[slot].state==State::Quarantined) return false;

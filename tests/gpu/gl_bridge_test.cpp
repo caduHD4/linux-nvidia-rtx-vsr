@@ -54,7 +54,31 @@ int main(int argc,char** argv){try{
       Check(cuCtxSetCurrent(cuda_context)==CUDA_SUCCESS,"worker CUDA current");
       auto processor=VsrProcessor::Create(cfg,argv[1],cuda_context,&error);Check(bool(processor),error);
       auto bridge=GlVsrBridge::Create(cfg,cuda_context,textures[0],textures[1],&error);Check(bool(bridge),error);
-      for(int i=0;i<30;++i) Check(bridge->Run(*processor,&error),error);
+      // Changing colors detects first-frame corruption and a one-frame lag.
+      // Pixel uploads/readbacks below belong only to this diagnostic fixture.
+      const unsigned char colors[3][3]={{64,128,192},{192,64,128},{128,192,64}};
+      for(int i=0;i<31;++i) {
+        const auto& expected=colors[i%3];
+        for(std::size_t x=0;x<input.size();x+=4)
+          for(int c=0;c<3;++c) input[x+c]=expected[c];
+        glBindTexture(GL_TEXTURE_2D,textures[0]);
+        glTexSubImage2D(GL_TEXTURE_2D,0,0,0,cfg.input.width,cfg.input.height,
+                       GL_RGBA,GL_UNSIGNED_BYTE,input.data());
+        glFinish();
+        Check(bridge->Run(*processor,&error),error);
+        GLuint fbo;glGenFramebuffers(1,&fbo);glBindFramebuffer(GL_FRAMEBUFFER,fbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,textures[1],0);
+        Check(glCheckFramebufferStatus(GL_FRAMEBUFFER)==GL_FRAMEBUFFER_COMPLETE,"per-frame FBO incomplete");
+        unsigned char pixel[4]{};
+        glReadPixels(cfg.output.width/2,cfg.output.height/2,1,1,GL_RGBA,GL_UNSIGNED_BYTE,pixel);
+        for(int c=0;c<3;++c)
+          Check(std::abs(int(pixel[c])-int(expected[c]))<=30,
+                "GL output does not match current frame "+std::to_string(i));
+        Check(pixel[3]==255,"GL current-frame alpha invalid");
+        glBindFramebuffer(GL_FRAMEBUFFER,0);glDeleteFramebuffers(1,&fbo);
+      }
+      Check(bridge->Close(&error),error);
+      Check(bridge->Close(&error),"bridge close must be idempotent");
       bridge.reset();processor.reset();
       eglMakeCurrent(display,EGL_NO_SURFACE,EGL_NO_SURFACE,EGL_NO_CONTEXT);
     }catch(...){worker_error=std::current_exception();}});

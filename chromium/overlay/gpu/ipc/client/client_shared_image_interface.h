@@ -132,9 +132,7 @@ class GPU_IPC_CLIENT_EXPORT ClientSharedImageInterface
   void SignalSyncToken(std::vector<SyncToken> sync_tokens,
                        base::OnceClosure callback) override;
 
-  GpuChannelHost* GetGpuChannelForNvidiaVsr() override {
-    return gpu_channel_.get();
-  }
+  GpuChannelHost* GetGpuChannelForNvidiaVsr() override;
 
   gpu::GpuChannelHost* gpu_channel() { return gpu_channel_.get(); }
 

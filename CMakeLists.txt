@@ -117,3 +117,13 @@ if(NvidiaVFX_FOUND AND BUILD_TESTING)
   set_tests_properties(gl_bridge_gles_gpu PROPERTIES LABELS gpu TIMEOUT 60
     ENVIRONMENT "__EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/10_nvidia.json;EGL_PLATFORM=x11;NVVFX_TEST_GLES=1")
 endif()
+
+if(NvidiaVFX_FOUND AND BUILD_TESTING AND UNIX AND NOT APPLE)
+  add_executable(gl_bridge_teardown_test tests/gpu/gl_bridge_teardown_test.cpp)
+  target_include_directories(gl_bridge_teardown_test PRIVATE ${NvidiaVFX_INCLUDE_DIRS} "${VFXSDK_ROOT}/external/cuda/include")
+  target_link_libraries(gl_bridge_teardown_test PRIVATE nvvfx_vsr_core cuda EGL GLESv2 ${CMAKE_DL_LIBS})
+  target_link_options(gl_bridge_teardown_test PRIVATE "-Wl,--wrap=dlsym")
+  add_test(NAME gl_bridge_teardown_gpu COMMAND gl_bridge_teardown_test "${VFXSDK_ROOT}")
+  set_tests_properties(gl_bridge_teardown_gpu PROPERTIES LABELS gpu TIMEOUT 60
+    ENVIRONMENT "__EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/10_nvidia.json;EGL_PLATFORM=x11")
+endif()

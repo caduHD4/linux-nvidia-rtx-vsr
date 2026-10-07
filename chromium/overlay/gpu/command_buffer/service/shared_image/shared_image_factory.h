@@ -288,16 +288,21 @@ class GPU_GLES2_EXPORT SharedImageRepresentationFactory {
   // NOTE: This object *must* outlive all objects created via the below methods,
   // as the |memory_type_tracker_| instance variable that it supplies to them is
   // used in their destruction process.
+  // gpu_only rejects CPU/mixed/lazy backings and prevents backing copies
+  // during access. Unsupported or stale resources return nullptr/fail access.
   std::unique_ptr<GLTextureImageRepresentation> ProduceGLTexture(
-      const Mailbox& mailbox);
+      const Mailbox& mailbox,
+      bool gpu_only = false);
   std::unique_ptr<GLTexturePassthroughImageRepresentation>
   ProduceGLTexturePassthrough(const Mailbox& mailbox);
   // If `required_usages` is not empty then the backing must have all the
   // required usages in order to create a representation.
+  // gpu_only additionally requires Ganesh GL.
   std::unique_ptr<SkiaImageRepresentation> ProduceSkia(
       const Mailbox& mailbox,
       scoped_refptr<SharedContextState> context_state,
-      SharedImageUsageSet required_usages = {});
+      SharedImageUsageSet required_usages = {},
+      bool gpu_only = false);
   std::unique_ptr<DawnImageRepresentation> ProduceDawn(
       const Mailbox& mailbox,
       const wgpu::Device& device,

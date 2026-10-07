@@ -13,6 +13,7 @@ template<class Payload> class PresentationCache {
   void Invalidate();
   bool Complete(std::uint64_t generation,std::uint64_t id,Payload enhanced);
   Payload Select(std::uint64_t id,Payload original);
+  template<class Predicate> std::size_t DiscardCompletedIf(Predicate predicate);
   std::size_t size() const;
  private:
   struct Entry {Payload enhanced{}; bool decided=false;};
@@ -59,6 +60,21 @@ template<class P> P PresentationCache<P>::Select(std::uint64_t id,P original) {
   entry->decided=true;
   last_id_=id;have_last_=true;last_choice_=selected;
   return selected;
+}
+// The owner identifies skipped frames by presentation order, never frame IDs.
+// Keep the frozen current choice and future results; release only unused leases.
+template<class P> template<class Predicate>
+std::size_t PresentationCache<P>::DiscardCompletedIf(Predicate predicate) {
+  std::size_t discarded=0;
+  for(auto& item:entries_) {
+    auto& entry=item.second;
+    if(!entry.decided && entry.enhanced && predicate(entry.enhanced)) {
+      entry.enhanced=P{};
+      entry.decided=true;
+      ++discarded;
+    }
+  }
+  return discarded;
 }
 template<class P> std::size_t PresentationCache<P>::size() const { return entries_.size(); }
 }

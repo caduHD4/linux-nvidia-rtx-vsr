@@ -389,9 +389,9 @@ std::optional<SharedImageMetadata> SharedImageFactory::GetSharedImageMetadata(
     return std::nullopt;
   }
   const auto& image = *it->second;
-  return SharedImageMetadata{image.format(), image.size(), image.color_space(),
-                             image.surface_origin(), image.alpha_type(),
-                             image.usage()};
+  return SharedImageMetadata{image.format(),      image.size(),
+                             image.color_space(), image.surface_origin(),
+                             image.alpha_type(),  image.usage()};
 }
 
 bool SharedImageFactory::CreateSharedImage(
@@ -1178,8 +1178,10 @@ SharedImageRepresentationFactory::~SharedImageRepresentationFactory() {
 }
 
 std::unique_ptr<GLTextureImageRepresentation>
-SharedImageRepresentationFactory::ProduceGLTexture(const Mailbox& mailbox) {
-  return manager_->ProduceGLTexture(mailbox, memory_type_tracker_.get());
+SharedImageRepresentationFactory::ProduceGLTexture(const Mailbox& mailbox,
+                                                   bool gpu_only) {
+  return manager_->ProduceGLTexture(mailbox, memory_type_tracker_.get(),
+                                    gpu_only);
 }
 
 std::unique_ptr<GLTexturePassthroughImageRepresentation>
@@ -1193,9 +1195,10 @@ std::unique_ptr<SkiaImageRepresentation>
 SharedImageRepresentationFactory::ProduceSkia(
     const Mailbox& mailbox,
     scoped_refptr<SharedContextState> context_state,
-    SharedImageUsageSet required_usages) {
+    SharedImageUsageSet required_usages,
+    bool gpu_only) {
   return manager_->ProduceSkia(mailbox, memory_type_tracker_.get(),
-                               context_state, required_usages);
+                               context_state, required_usages, gpu_only);
 }
 
 std::unique_ptr<DawnImageRepresentation>

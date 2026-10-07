@@ -1,5 +1,4 @@
 #include "gpu/ipc/service/nvidia_vsr_gpu_service.h"
-#include <atomic>
 #include <optional>
 #include <vector>
 #include "base/feature_list.h"
@@ -16,14 +15,13 @@
 #include "gpu/command_buffer/service/shared_image/shared_image_factory.h"
 #include "gpu/command_buffer/service/shared_image/shared_image_representation.h"
 #include "gpu/command_buffer/service/texture_manager.h"
-#include "gpu/command_buffer/service/texture_passthrough.h"
 #include "gpu/ipc/common/command_buffer_id.h"
 #include "gpu/ipc/service/gpu_channel.h"
 #include "gpu/ipc/service/gpu_channel_manager.h"
 #include "gpu/ipc/service/shared_image_stub.h"
-#include "mojo/public/cpp/bindings/lib/report_bad_message.h"
 #include "nvvfx_vsr/processor_config.h"
 #include "third_party/skia/include/core/SkCanvas.h"
+#include "third_party/skia/include/core/SkColorSpace.h"
 #include "third_party/skia/include/core/SkImage.h"
 #include "third_party/skia/include/core/SkSamplingOptions.h"
 #include "third_party/skia/include/gpu/ganesh/GrBackendSemaphore.h"
@@ -34,10 +32,10 @@
 #include "ui/gl/gl_features.h"
 #include "ui/gl/gl_implementation.h"
 #include "ui/gl/gl_surface.h"
+#include "ui/gl/gl_version_info.h"
 #include "ui/gl/init/gl_factory.h"
 namespace gpu {
 namespace {
-std::atomic<bool> g_session_claimed{false};
 uint64_t NowMs() { return base::TimeTicks::Now().since_origin().InMilliseconds(); }
 bool SameSize(nvvfx_vsr::Dimensions a,nvvfx_vsr::Dimensions b) {
   return a.width==b.width && a.height==b.height;
@@ -52,7 +50,7 @@ bool Supported(const SharedImageMetadata& info) {
         info.format==viz::SinglePlaneFormat::kBGRA_8888) &&
        info.alpha_type==kOpaque_SkAlphaType);
 }
-void CreateTexture(GLuint* id,nvvfx_vsr::Dimensions size) {
+bool CreateTexture(GLuint* id,nvvfx_vsr::Dimensions size) {
   glGenTextures(1,id);glBindBuffer(GL_PIXEL_UNPACK_BUFFER,0);
   glBindTexture(GL_TEXTURE_2D,*id);
   glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_LINEAR);
@@ -61,6 +59,7 @@ void CreateTexture(GLuint* id,nvvfx_vsr::Dimensions size) {
   glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
   glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA8,size.width,size.height,0,
                GL_RGBA,GL_UNSIGNED_BYTE,nullptr);
+  return *id!=0 && glGetError()==GL_NO_ERROR;
 }
 }
 struct NvidiaVsrGpuService::TextureSlot {
@@ -68,7 +67,7 @@ struct NvidiaVsrGpuService::TextureSlot {
   nvvfx_vsr::ProcessorConfig config{};
 };
 struct NvidiaVsrGpuService::Job {
-  mojom::NvidiaVsrRequestPtr request;
+  mojom::NvidiaVsrFrameRequestPtr request;
   ProcessCallback callback;
   std::optional<std::size_t> slot;
   NvidiaVsrWorkerResult result;
@@ -105,19 +104,54 @@ NvidiaVsrGpuService::~NvidiaVsrGpuService() {
   DCHECK(jobs_.empty());
 }
 bool NvidiaVsrGpuService::Initialize() {
-  if(!base::FeatureList::IsEnabled(features::kNvidiaVideoSuperResolution) ||
-     gl::GetGLImplementation()!=gl::kGLImplementationEGLGLES2 ||
-     !context_ || !context_->gr_context() || !context_->MakeCurrent(nullptr,true))
+  const auto gl_implementation = gl::GetGLImplementation();
+  if (!base::FeatureList::IsEnabled(features::kNvidiaVideoSuperResolution)) {
+    LOG(ERROR) << "NVIDIA VSR init: feature disabled";
     return false;
-  bool expected=false;
-  if(!g_session_claimed.compare_exchange_strong(expected,true)) return false;
+  }
+  if (gl_implementation != gl::kGLImplementationEGLGLES2 &&
+      gl_implementation != gl::kGLImplementationEGLANGLE) {
+    LOG(ERROR) << "NVIDIA VSR init: unsupported GL implementation "
+               << gl::GetGLImplementationGLName(gl::GLImplementationParts(gl_implementation));
+    return false;
+  }
+  if (!context_ || !context_->gr_context() ||
+      !context_->MakeCurrent(nullptr, true)) {
+    LOG(ERROR) << "NVIDIA VSR init: SharedContextState unavailable";
+    return false;
+  }
+  if (!context_->real_context()->GetVersionInfo()->IsAtLeastGLES(3, 0)) {
+    LOG(ERROR) << "NVIDIA VSR init: GL version below ES 3.0";
+    return false;
+  }
+  // Each video renderer owns an independent SDK session. CUDA's primary
+  // context is retained per worker thread; the SDK processor is not global.
   claimed_=true;
   auto surface=gl::init::CreateOffscreenGLSurface(
-      context_->real_context()->GetGLDisplayEGL(),gfx::Size(1,1));
-  auto worker_context=surface ? gl::init::CreateGLContext(
-      context_->real_context()->share_group(),surface.get(),gl::GLContextAttribs()) : nullptr;
-  if(!worker_context) {g_session_claimed=false;claimed_=false;return false;}
-  worker_.reset(new NvidiaVsrGpuWorker(std::move(worker_context),std::move(surface)));
+      context_->real_context()->GetGLDisplayEGL(),gfx::Size());
+  if (!surface) {
+    LOG(ERROR) << "NVIDIA VSR init: could not create worker GL surface";
+    claimed_=false;return false;
+  }
+  gl::GLContextAttribs worker_attribs;
+  // ANGLE uses its global share groups for textures/semaphores. Native EGL
+  // instead shares the command decoder's explicit share group.
+  const bool use_angle =
+      gl_implementation == gl::kGLImplementationEGLANGLE;
+  worker_attribs.global_texture_share_group = use_angle;
+  worker_attribs.global_semaphore_share_group = use_angle;
+  worker_attribs.robust_resource_initialization = use_angle;
+  worker_attribs.robust_buffer_access = use_angle;
+  worker_attribs.allow_client_arrays = !use_angle;
+  auto worker_context = gl::init::CreateGLContext(
+      use_angle ? nullptr : context_->real_context()->share_group(),
+      surface.get(), worker_attribs);
+  if (!worker_context) {
+    LOG(ERROR) << "NVIDIA VSR init: could not create shared GL worker context";
+    claimed_=false;return false;
+  }
+  worker_context_=std::move(worker_context);worker_surface_=std::move(surface);
+  worker_.reset(new NvidiaVsrGpuWorker(worker_context_.get(),worker_surface_.get()));
   source_sequence_=scheduler_->CreateSequence(SchedulingPriority::kNormal,owner_runner_,
                                               CommandBufferNamespace::GPU_IO,source_id_);
   output_sequence_=scheduler_->CreateSequence(SchedulingPriority::kNormal,owner_runner_,
@@ -126,23 +160,26 @@ bool NvidiaVsrGpuService::Initialize() {
   return true;
 }
 SyncToken NvidiaVsrGpuService::SourceToken(uint64_t count) const {
-  return SyncToken(CommandBufferNamespace::GPU_IO,source_id_,count);
+  SyncToken token(CommandBufferNamespace::GPU_IO,source_id_,count);
+  token.SetVerifyFlush();return token;
 }
 SyncToken NvidiaVsrGpuService::OutputToken(uint64_t count) const {
-  return SyncToken(CommandBufferNamespace::GPU_IO,output_id_,count);
+  SyncToken token(CommandBufferNamespace::GPU_IO,output_id_,count);
+  token.SetVerifyFlush();return token;
 }
-void NvidiaVsrGpuService::Process(mojom::NvidiaVsrRequestPtr request,
+void NvidiaVsrGpuService::Process(mojom::NvidiaVsrFrameRequestPtr request,
                                   ProcessCallback callback) {
   DCHECK(owner_runner_->BelongsToCurrentThread());
   if(closing_ || !claimed_ || request->release_count!=last_count_+1 ||
      request->dependencies.size()>8 || jobs_.size()>=4) {
-    mojo::ReportBadMessage("Invalid NVIDIA VSR session/order/queue");Close();return;
+    receiver_.ReportBadMessage("Invalid NVIDIA VSR session/order/queue");Close();return;
   }
   const uint64_t count=request->release_count;last_count_=count;
   auto job=std::make_unique<Job>();job->callback=std::move(callback);
   job->request=std::move(request);
-  auto cfg=nvvfx_vsr::SelectProcessorConfig(
-      {job->request->visible_rect.width(),job->request->visible_rect.height()},{1920,1080});
+  job->result.status="not processed";
+  auto cfg=nvvfx_vsr::SelectBrowserProcessorConfig(
+      {job->request->visible_rect.width(),job->request->visible_rect.height()});
   bool valid=!job->request->protected_video && !job->request->encrypted_track &&
       job->request->generation && job->request->frame_id && cfg &&
       cfg->quality==static_cast<int>(job->request->quality) &&
@@ -177,8 +214,18 @@ void NvidiaVsrGpuService::PrepareSource(uint64_t count) {
     job.worker_done=true;job.result.status="ownership/format/protection/backend bypass";
     FinishSource(count);return;
   }
-  auto cfg=*nvvfx_vsr::SelectProcessorConfig(
-      {job.request->visible_rect.width(),job.request->visible_rect.height()},{1920,1080});
+  auto cfg=*nvvfx_vsr::SelectBrowserProcessorConfig(
+      {job.request->visible_rect.width(),job.request->visible_rect.height()});
+  // Native GL and Skia both mutate state outside Chromium's command decoder.
+  context_->set_need_context_state_reset(true);
+  // Prove publication backing capability before importing the source or SDK.
+  auto output_rep=representations_->ProduceGLTexture(job.request->output, /*gpu_only=*/true);
+  if(!output_rep || output_rep->GetTexture()->target()!=GL_TEXTURE_2D ||
+     output->color_space!=input->color_space.GetAsFullRangeRGB()) {
+    job.worker_done=true;job.result.status="output backing/color bypass";
+    FinishSource(count);return;
+  }
+  output_rep.reset();
   const auto slot=*job.slot;
   if(slots_[slot] && (!SameSize(slots_[slot]->config.input,cfg.input) ||
                      !SameSize(slots_[slot]->config.output,cfg.output))) {
@@ -196,45 +243,79 @@ void NvidiaVsrGpuService::PrepareSource(uint64_t count) {
   }
   if(!slots_[slot]) {
     slots_[slot]=std::make_unique<TextureSlot>();slots_[slot]->config=cfg;
-    CreateTexture(&slots_[slot]->input,cfg.input);CreateTexture(&slots_[slot]->output,cfg.output);
+    const bool allocated=CreateTexture(&slots_[slot]->input,cfg.input) &&
+        CreateTexture(&slots_[slot]->output,cfg.output);
     context_->gr_context()->resetContext();
+    if(!allocated) {
+      glDeleteTextures(1,&slots_[slot]->input);glDeleteTextures(1,&slots_[slot]->output);
+      slots_[slot].reset();job.worker_done=true;
+      job.result.status="private texture allocation failed";FinishSource(count);return;
+    }
   }
-  job.source_rep=representations_->ProduceSkia(job.request->input,context_);
+  job.source_rep=representations_->ProduceSkia(
+      job.request->input,context_,{},/*gpu_only=*/true);
   std::vector<GrBackendSemaphore> begin,end;
-  job.source_access=job.source_rep ? job.source_rep->BeginScopedReadAccess(&begin,&end) : nullptr;
-  job.source_image=job.source_access ? job.source_access->CreateSkImage(context_.get()) : nullptr;
+  job.source_access=job.source_rep ?
+      job.source_rep->BeginScopedReadAccess(&begin,&end) : nullptr;
+  job.source_image=job.source_access ?
+      job.source_access->CreateSkImage(context_.get()) : nullptr;
   GrGLTextureInfo texture{GL_TEXTURE_2D,slots_[slot]->input,GL_RGBA8};
   auto backend=GrBackendTextures::MakeGL(cfg.input.width,cfg.input.height,
-                                       skgpu::Mipmapped::kNo,texture);
+      skgpu::Mipmapped::kNo,texture);
   job.surface=SkSurfaces::WrapBackendTexture(context_->gr_context(),backend,
       kTopLeft_GrSurfaceOrigin,0,kRGBA_8888_SkColorType,
       input->color_space.GetAsFullRangeRGB().ToSkColorSpace(),nullptr);
   if(!job.source_image || !job.surface ||
      (!begin.empty() && !job.surface->wait(begin.size(),begin.data(),false))) {
     job.worker_done=true;job.result.status="Skia source conversion unavailable";
-    FinishSource(count);return;
+    if(!job.source_access) {FinishSource(count);return;}
+    GrFlushInfo cleanup;
+    cleanup.fNumSemaphores=end.size();cleanup.fSignalSemaphores=end.data();
+    context_->gr_context()->flush(cleanup);
+    job.source_access->ApplyBackendSurfaceEndState();
+    context_->gr_context()->submit();
+    job.owner_fence=glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE,0);glFlush();
+    scheduler_->ContinueTask(source_sequence_,base::BindOnce(
+        &NvidiaVsrGpuService::FinishSource,base::WrapRefCounted(this),count));
+    scheduler_->DisableSequence(source_sequence_);
+    owner_runner_->PostTask(FROM_HERE,base::BindOnce(
+        &NvidiaVsrGpuService::PollSourceFence,base::WrapRefCounted(this),count));
+    return;
   }
   job.surface->getCanvas()->drawImageRect(job.source_image,
       SkRect::MakeXYWH(job.request->visible_rect.x(),job.request->visible_rect.y(),
-                      cfg.input.width,cfg.input.height),
+                       cfg.input.width,cfg.input.height),
       SkRect::MakeWH(cfg.input.width,cfg.input.height),SkSamplingOptions(),nullptr,
       SkCanvas::kStrict_SrcRectConstraint);
   GrFlushInfo flush;
   flush.fNumSemaphores=end.size();flush.fSignalSemaphores=end.data();
-  context_->gr_context()->flush(job.surface.get(),SkSurfaces::BackendSurfaceAccess::kNoAccess,flush);
-  job.source_access->ApplyBackendSurfaceEndState();context_->gr_context()->submit();
+  const auto flushed=context_->gr_context()->flush(
+      job.surface.get(),SkSurfaces::BackendSurfaceAccess::kNoAccess,flush);
+  job.source_access->ApplyBackendSurfaceEndState();
+  const bool submitted=context_->gr_context()->submit();
+  const bool source_valid=flushed.fSuccess && submitted &&
+      (end.empty() || flushed.fSubmitted==GrSemaphoresSubmitted::kYes);
+  if(!source_valid) {
+    job.worker_done=true;job.result.status="Skia source flush/submit failed";
+  }
   job.owner_fence=glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE,0);
-  GLsync worker_fence=glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE,0);glFlush();
+  glFlush();
+  GLsync worker_fence=source_valid ? glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE,0) : nullptr;
+  glFlush();
+  if(source_valid && !worker_fence) {
+    job.worker_done=true;job.result.status="worker fence unavailable";
+  }
   scheduler_->ContinueTask(source_sequence_,base::BindOnce(
       &NvidiaVsrGpuService::FinishSource,base::WrapRefCounted(this),count));
   scheduler_->DisableSequence(source_sequence_);
   owner_runner_->PostTask(FROM_HERE,base::BindOnce(
       &NvidiaVsrGpuService::PollSourceFence,base::WrapRefCounted(this),count));
+  if(!worker_fence) return;
   worker_runner_->PostTask(FROM_HERE,base::BindOnce(&NvidiaVsrGpuWorker::Run,
       base::Unretained(worker_.get()),slot,cfg,slots_[slot]->input,slots_[slot]->output,
-      worker_fence,base::DoNothing(),base::BindOnce(&NvidiaVsrGpuService::TryStart,
-      base::WrapRefCounted(this),slot),base::BindPostTask(owner_runner_,
-      base::BindOnce(&NvidiaVsrGpuService::OnWorkerDone,base::WrapRefCounted(this),count))));
+      NvidiaVsrSourceFence{worker_fence},base::DoNothing(),base::BindOnce(&NvidiaVsrGpuService::TryStart,
+      base::WrapRefCounted(this),slot),base::BindOnce(
+      &NvidiaVsrGpuService::OnWorkerFinished,base::WrapRefCounted(this),count,slot)));
 }
 void NvidiaVsrGpuService::ResumeAfterReset(uint64_t count,bool safe) {
   auto& job=*jobs_.at(count);job.reset_done=true;
@@ -263,14 +344,31 @@ void NvidiaVsrGpuService::PollSourceFence(uint64_t count) {
 }
 void NvidiaVsrGpuService::FinishSource(uint64_t count) {
   auto& job=*jobs_.at(count);
-  job.surface.reset();job.source_image.reset();job.source_access.reset();job.source_rep.reset();
+  // Polling and this scheduler continuation are separate tasks. Another GPU
+  // client may have changed the current GL context between them. Skia access
+  // must end on the same context on which it began.
+  if(!context_ || !context_->MakeCurrent(nullptr,true)) {
+    unsafe_=true;
+    {base::AutoLock lock(admission_lock_);admission_.Disable();}
+    // Retain the source access and its unreleased token on context failure.
+    scheduler_->ContinueTask(source_sequence_,base::BindOnce(
+        &NvidiaVsrGpuService::FinishSource,base::WrapRefCounted(this),count));
+    scheduler_->DisableSequence(source_sequence_);
+    return;
+  }
+  context_->set_need_context_state_reset(true);
+  job.source_access.reset();job.source_rep.reset();
   job.source_done=true;
 }
 bool NvidiaVsrGpuService::TryStart(std::size_t slot) {
   base::AutoLock lock(admission_lock_);return admission_.Start(slot,NowMs());
 }
 void NvidiaVsrGpuService::Watchdog() {
-  base::AutoLock lock(admission_lock_);admission_.CheckWatchdog(NowMs());
+  base::AutoLock lock(admission_lock_);
+  const bool was_disabled = admission_.disabled();
+  admission_.CheckWatchdog(NowMs());
+  if (!was_disabled && admission_.disabled())
+    LOG(WARNING) << "NVIDIA VSR watchdog disabled session: running job exceeded 100ms";
 }
 void NvidiaVsrGpuService::WaitForOutput(uint64_t count) {
   auto& job=*jobs_.at(count);
@@ -279,6 +377,19 @@ void NvidiaVsrGpuService::WaitForOutput(uint64_t count) {
   scheduler_->ContinueTask(output_sequence_,base::BindOnce(
       &NvidiaVsrGpuService::FinishOutput,base::WrapRefCounted(this),count));
   scheduler_->DisableSequence(output_sequence_);
+}
+void NvidiaVsrGpuService::OnWorkerFinished(uint64_t count,std::size_t slot,
+                                          NvidiaVsrWorkerResult result) {
+  // Runs on the serial worker before it can begin the next queued inference.
+  // Owner publication may lag behind; keep the slot occupied until its copy.
+  {
+    base::AutoLock lock(admission_lock_);
+    if(result.quarantine) admission_.Quarantine(slot);
+    else admission_.FinishInference(slot);
+  }
+  owner_runner_->PostTask(FROM_HERE,base::BindOnce(
+      &NvidiaVsrGpuService::OnWorkerDone,base::WrapRefCounted(this),count,
+      std::move(result)));
 }
 void NvidiaVsrGpuService::OnWorkerDone(uint64_t count,NvidiaVsrWorkerResult result) {
   auto& job=*jobs_.at(count);job.worker_done=true;job.result=std::move(result);
@@ -289,34 +400,41 @@ bool NvidiaVsrGpuService::Publish(Job& job) {
   if(closing_ || unsafe_ || !channel_factory_ ||
      !channel_factory_->HasSharedImage(job.request->output) ||
      !context_->MakeCurrent(nullptr,true)) return false;
-  auto rep=representations_->ProduceGLTexture(job.request->output);
+  context_->set_need_context_state_reset(true);
+  auto rep=representations_->ProduceGLTexture(job.request->output, /*gpu_only=*/true);
   auto access=rep ? rep->BeginScopedAccess(GL_SHARED_IMAGE_ACCESS_MODE_READWRITE_CHROMIUM,
       SharedImageRepresentation::AllowUnclearedAccess::kYes) : nullptr;
   if(!access || rep->GetTexture()->target()!=GL_TEXTURE_2D) return false;
-  GLuint fbo[2]{};glGenFramebuffers(2,fbo);
-  glBindFramebuffer(GL_READ_FRAMEBUFFER,fbo[0]);
-  glFramebufferTexture2D(GL_READ_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,
+  GLuint fbo[2]{};glGenFramebuffersEXT(2,fbo);
+  glBindFramebufferEXT(GL_READ_FRAMEBUFFER,fbo[0]);
+  glFramebufferTexture2DEXT(GL_READ_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,
                         slots_[*job.slot]->output,0);
-  bool valid=glCheckFramebufferStatus(GL_READ_FRAMEBUFFER)==GL_FRAMEBUFFER_COMPLETE;
-  glBindFramebuffer(GL_DRAW_FRAMEBUFFER,fbo[1]);
-  glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,
+  bool valid=glCheckFramebufferStatusEXT(GL_READ_FRAMEBUFFER)==GL_FRAMEBUFFER_COMPLETE;
+  glBindFramebufferEXT(GL_DRAW_FRAMEBUFFER,fbo[1]);
+  glFramebufferTexture2DEXT(GL_DRAW_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,
                         rep->GetTexture()->service_id(),0);
-  valid&=glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER)==GL_FRAMEBUFFER_COMPLETE;
+  valid&=glCheckFramebufferStatusEXT(GL_DRAW_FRAMEBUFFER)==GL_FRAMEBUFFER_COMPLETE;
   if(valid) {
     const auto size=job.request->output_size;
+    // Blits obey scissor and window rectangles inherited from Skia.
+    glDisable(GL_SCISSOR_TEST);
+    if(context_->real_context()->HasExtension("GL_EXT_window_rectangles"))
+      glWindowRectanglesEXT(GL_EXCLUSIVE_EXT,0,nullptr);
     glBlitFramebuffer(0,0,size.width(),size.height(),0,0,size.width(),size.height(),
                        GL_COLOR_BUFFER_BIT,GL_NEAREST);
     valid=glGetError()==GL_NO_ERROR;
     if(valid) rep->SetCleared();
   }
-  glBindFramebuffer(GL_FRAMEBUFFER,0);glDeleteFramebuffers(2,fbo);
+  glBindFramebufferEXT(GL_FRAMEBUFFER,0);glDeleteFramebuffersEXT(2,fbo);
   access.reset();glFlush();context_->gr_context()->resetContext();
   return valid;
 }
 void NvidiaVsrGpuService::FinishOutput(uint64_t count) {
   auto& job=*jobs_.at(count);
   DCHECK(job.source_done && job.worker_done);
-  const bool success=job.result.success && Publish(job);
+  bool enabled;
+  {base::AutoLock lock(admission_lock_);enabled=!admission_.disabled();}
+  const bool success=job.result.success && enabled && Publish(job);
   if(job.slot) {base::AutoLock lock(admission_lock_);
     if(job.result.quarantine) admission_.Quarantine(*job.slot);
     else admission_.CompleteSafely(*job.slot);}
@@ -353,10 +471,13 @@ void NvidiaVsrGpuService::OnShutdown(bool safe) {
     // GPU process teardown. No in-flight CUDA registration can be invalidated.
     AddRef();return;
   }
+  context_->set_need_context_state_reset(true);
   for(auto& slot:slots_) if(slot) {
     glDeleteTextures(1,&slot->input);glDeleteTextures(1,&slot->output);slot.reset();
   }
-  worker_.reset();representations_.reset();context_.reset();channel_factory_.reset();
-  if(claimed_) {g_session_claimed=false;claimed_=false;}
+  context_->gr_context()->resetContext();
+  worker_.reset();worker_context_.reset();worker_surface_.reset();
+  representations_.reset();context_.reset();channel_factory_.reset();
+  claimed_=false;
 }
 }  // namespace gpu

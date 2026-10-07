@@ -71,7 +71,7 @@ class GPU_COMMAND_BUFFER_CLIENT_EXPORT SharedImageInterface
     : public base::RefCountedThreadSafe<SharedImageInterface> {
  public:
   // Out-of-process adapters can opt into a channel-owned GPU service.
-  virtual GpuChannelHost* GetGpuChannelForNvidiaVsr() { return nullptr; }
+  virtual GpuChannelHost* GetGpuChannelForNvidiaVsr();
 
   // Creates a shared image of requested |format|, |size| and |color_space|.
   // |usage| is a combination of |SharedImageUsage| bits that describes which
@@ -399,7 +399,6 @@ class GPU_COMMAND_BUFFER_CLIENT_EXPORT SharedImageInterface
  private:
   friend class ArcSharedImageInterface;
   friend class ClientSharedImageInterface;
-class GpuChannelHost;
   friend class SharedImageInterfaceInProcessBase;
   friend class TestSharedImageInterface;
   friend class media::MockSharedImageInterface;

@@ -8,13 +8,16 @@ body{margin:24px;background:#111;color:#eee;font:16px system-ui}main{max-width:1
 </style>
 <main>
 <h1>Teste de reprodução</h1>
-<p>Escolha um vídeo. Use os controles para pausar, buscar e alternar tela cheia.</p>
+<p>Escolha um vídeo. Use os controles para pausar, buscar e alternar tela cheia. O aprimoramento NVIDIA funciona somente em tela cheia.</p>
 <label>Vídeo <select id="clip">
+<option value="h264-360p-30.mp4">H.264 · 360p · 30 FPS</option>
+<option value="h264-480p-30.mp4">H.264 · 480p · 30 FPS</option>
 <option value="h264-720p-30.mp4">H.264 · 720p · 30 FPS</option>
 <option value="h264-720p-60.mp4">H.264 · 720p · 60 FPS</option>
 <option value="h264-1080p-30.mp4">H.264 · 1080p · 30 FPS</option>
 <option value="vp9-720p-30.webm">VP9 · 720p · 30 FPS</option>
 <option value="av1-720p-30.webm">AV1 · 720p · 30 FPS</option>
+<option value="mse">MSE · 720p → 1080p · 30 FPS</option>
 </select></label>
 <button id="fullscreen">Tela cheia</button>
 <button id="seek">Buscar +5 segundos</button>
@@ -25,7 +28,33 @@ body{margin:24px;background:#111;color:#eee;font:16px system-ui}main{max-width:1
 </main>
 <script>
 const video=document.querySelector('#video'),second=document.querySelector('#second');
-document.querySelector('#clip').onchange=event=>{const resume=!video.paused;video.src=event.target.value;video.load();if(resume)video.play().catch(()=>{});};
+let mseURL;
+async function loadMse() {
+  if(!window.MediaSource)throw new Error('MSE indisponível neste navegador.');
+  const source=new MediaSource();
+  mseURL=URL.createObjectURL(source);video.src=mseURL;
+  await new Promise((resolve,reject)=>{source.addEventListener('sourceopen',resolve,{once:true});source.addEventListener('error',reject,{once:true});});
+  const buffer=source.addSourceBuffer('video/mp4; codecs="avc1.640028"');
+  for(const [index,name] of ['mse-720p-30.mp4','mse-1080p-30.mp4'].entries()) {
+    const response=await fetch(name);if(!response.ok)throw new Error(`Mídia indisponível: ${name}`);
+    const data=await response.arrayBuffer();
+    if(index)buffer.timestampOffset=12;
+    await new Promise((resolve,reject)=>{
+      buffer.addEventListener('updateend',resolve,{once:true});
+      buffer.addEventListener('error',reject,{once:true});buffer.appendBuffer(data);
+    });
+  }
+  source.endOfStream();
+}
+document.querySelector('#clip').onchange=async event=>{
+  const resume=!video.paused;video.pause();
+  if(mseURL){URL.revokeObjectURL(mseURL);mseURL=undefined;}
+  try {
+    if(event.target.value==='mse')await loadMse();
+    else {video.src=event.target.value;video.load();}
+    if(resume)await video.play();
+  }catch(error){document.querySelector('#stats').textContent=error.message;}
+};
 document.querySelector('#fullscreen').onclick=()=>video.requestFullscreen().catch(()=>{});
 document.querySelector('#seek').onclick=()=>{if(Number.isFinite(video.duration))video.currentTime=(video.currentTime+5)%video.duration;};
 document.querySelector('#dual').onclick=()=>{const show=second.style.display!=='block';second.style.display=show?'block':'none';if(show)second.play().catch(()=>{});else second.pause();};

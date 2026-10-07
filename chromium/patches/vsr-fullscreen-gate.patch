@@ -1,0 +1,170 @@
+diff --git a/media/base/BUILD.gn b/media/base/BUILD.gn
+index 3a1e7f595f..70343aa83e 100644
+--- a/media/base/BUILD.gn
++++ b/media/base/BUILD.gn
+@@ -382,6 +382,7 @@ source_set("base") {
+     "video_frame_pool.h",
+     "video_renderer.cc",
+     "video_renderer.h",
++    "video_renderer_sink.cc",
+     "video_renderer_sink.h",
+     "video_spatial_format.cc",
+     "video_spatial_format.h",
+diff --git a/media/base/video_renderer_sink.h b/media/base/video_renderer_sink.h
+index 8031eb6ff8..fd0c303874 100644
+--- a/media/base/video_renderer_sink.h
++++ b/media/base/video_renderer_sink.h
+@@ -5,6 +5,9 @@
+ #ifndef MEDIA_BASE_VIDEO_RENDERER_SINK_H_
+ #define MEDIA_BASE_VIDEO_RENDERER_SINK_H_
+ 
++#include <cstdint>
++
++#include "base/functional/callback.h"
+ #include "base/memory/scoped_refptr.h"
+ #include "base/time/time.h"
+ #include "media/base/media_export.h"
+@@ -71,6 +74,17 @@ class MEDIA_EXPORT VideoRendererSink {
+                                 bool repaint_duplicate_frame = false) = 0;
+ 
+   virtual ~VideoRendererSink() {}
++
++  // Per-player fullscreen epoch, readable on media/compositor threads. Bit0
++  // is active; other bits distinguish exit/reentry even between render ticks.
++  // Non-browser sinks conservatively bypass experimental enhancement.
++  virtual uint64_t NvidiaVsrFullscreenEpoch() const;
++  // The callback must post to its owner sequence. Notification also works
++  // while rendering is stopped, so a paused enhanced frame can be replaced.
++  virtual void SetNvidiaVsrFullscreenCallback(base::RepeatingClosure callback);
++  // Replace only the still-displayed enhanced frame from the observed epoch.
++  virtual void PaintNvidiaVsrOriginal(scoped_refptr<VideoFrame> original,
++                                    uint64_t enhanced_id,uint64_t epoch);
+ };
+ 
+ }  // namespace media
+diff --git a/third_party/blink/renderer/core/html/media/html_video_element.cc b/third_party/blink/renderer/core/html/media/html_video_element.cc
+index e07540f7b2..2061dcda96 100644
+--- a/third_party/blink/renderer/core/html/media/html_video_element.cc
++++ b/third_party/blink/renderer/core/html/media/html_video_element.cc
+@@ -1068,7 +1068,11 @@ WebMediaPlayer::DisplayType HTMLVideoElement::GetDisplayType() const {
+     return WebMediaPlayer::DisplayType::kDocumentPictureInPicture;
+   }
+ 
+-  if (is_effectively_fullscreen_) {
++  // DOM fullscreen membership is authoritative. Intersection heuristics can
++  // briefly report false after layout/controls changes while the player stays
++  // fullscreen; they must not disable video enhancement mid-playback.
++  Element* fullscreen_element = Fullscreen::FullscreenElementFrom(GetDocument());
++  if (fullscreen_element && fullscreen_element->contains(this)) {
+     return WebMediaPlayer::DisplayType::kFullscreen;
+   }
+ 
+diff --git a/third_party/blink/renderer/platform/media/video_frame_compositor.cc b/third_party/blink/renderer/platform/media/video_frame_compositor.cc
+index b1176370af..8274b2c6ea 100644
+--- a/third_party/blink/renderer/platform/media/video_frame_compositor.cc
++++ b/third_party/blink/renderer/platform/media/video_frame_compositor.cc
+@@ -82,6 +82,45 @@ void VideoFrameCompositor::InitializeSubmitter() {
+   submitter_->Initialize(this, /* is_media_stream = */ false);
+ }
+ 
++uint64_t VideoFrameCompositor::NvidiaVsrFullscreenEpoch() const {
++  return nvidia_vsr_fullscreen_epoch_.load(std::memory_order_relaxed);
++}
++
++void VideoFrameCompositor::PaintNvidiaVsrOriginal(
++    scoped_refptr<media::VideoFrame> original,uint64_t enhanced_id,uint64_t epoch) {
++  if(!task_runner_->BelongsToCurrentThread()) {
++    PostCrossThreadTask(*task_runner_,FROM_HERE,CrossThreadBindOnce(
++        &VideoFrameCompositor::PaintNvidiaVsrOriginal,
++        weak_ptr_factory_.GetWeakPtr(),std::move(original),enhanced_id,epoch));
++    return;
++  }
++  {
++    base::AutoLock lock(current_frame_lock_);
++    if(!current_frame_ ||
++       current_frame_->unique_id().GetUnsafeValue()!=enhanced_id) return;
++  }
++  // All frame installation happens on this sequence. The expected ID prevents
++  // replacing a newer frame. Restore this old enhanced frame even if fullscreen
++  // changed again while the notification was queued (including paused playback).
++  PaintSingleFrame(std::move(original),true);
++}
++
++void VideoFrameCompositor::SetNvidiaVsrFullscreenCallback(
++    base::RepeatingClosure callback) {
++  base::AutoLock lock(nvidia_vsr_fullscreen_lock_);
++  nvidia_vsr_fullscreen_changed_=std::move(callback);
++}
++
++void VideoFrameCompositor::SetNvidiaVsrFullscreen(bool fullscreen) {
++  const auto epoch=nvidia_vsr_fullscreen_epoch_.load(std::memory_order_relaxed);
++  if(static_cast<bool>(epoch & 1)==fullscreen) return;
++  nvidia_vsr_fullscreen_epoch_.store(epoch+1,std::memory_order_relaxed);
++  base::RepeatingClosure changed;
++  {base::AutoLock lock(nvidia_vsr_fullscreen_lock_);
++   changed=nvidia_vsr_fullscreen_changed_;}
++  if(changed) changed.Run();
++}
++
+ VideoFrameCompositor::~VideoFrameCompositor() {
+   DCHECK(task_runner_->BelongsToCurrentThread());
+   DCHECK(!callback_);
+diff --git a/third_party/blink/renderer/platform/media/video_frame_compositor.h b/third_party/blink/renderer/platform/media/video_frame_compositor.h
+index 1370cf7bb6..66b37c5400 100644
+--- a/third_party/blink/renderer/platform/media/video_frame_compositor.h
++++ b/third_party/blink/renderer/platform/media/video_frame_compositor.h
+@@ -5,6 +5,7 @@
+ #ifndef THIRD_PARTY_BLINK_RENDERER_PLATFORM_MEDIA_VIDEO_FRAME_COMPOSITOR_H_
+ #define THIRD_PARTY_BLINK_RENDERER_PLATFORM_MEDIA_VIDEO_FRAME_COMPOSITOR_H_
+ 
++#include <atomic>
+ #include <utility>
+ 
+ #include "base/functional/callback.h"
+@@ -118,6 +119,13 @@ class PLATFORM_EXPORT VideoFrameCompositor : public media::VideoRendererSink,
+   // Can be called from any thread.
+   virtual scoped_refptr<media::VideoFrame> GetCurrentFrameOnAnyThread();
+ 
++  uint64_t NvidiaVsrFullscreenEpoch() const override;
++  void SetNvidiaVsrFullscreenCallback(base::RepeatingClosure callback) override;
++  void PaintNvidiaVsrOriginal(scoped_refptr<media::VideoFrame> original,
++                            uint64_t enhanced_id,uint64_t epoch) override;
++  // Called on the player/main sequence; consumers use an atomic epoch only.
++  void SetNvidiaVsrFullscreen(bool fullscreen);
++
+   // media::VideoRendererSink implementation. These methods must be called from
+   // the same thread (typically the media thread).
+   void Start(RenderCallback* callback) override;
+@@ -287,6 +295,11 @@ class PLATFORM_EXPORT VideoFrameCompositor : public media::VideoRendererSink,
+ 
+   std::unique_ptr<WebVideoFrameSubmitter> submitter_;
+ 
++  std::atomic<uint64_t> nvidia_vsr_fullscreen_epoch_{0};
++  base::Lock nvidia_vsr_fullscreen_lock_;
++  base::RepeatingClosure nvidia_vsr_fullscreen_changed_
++      GUARDED_BY(nvidia_vsr_fullscreen_lock_);
++
+   base::WeakPtrFactory<VideoFrameCompositor> weak_ptr_factory_{this};
+ };
+ 
+diff --git a/third_party/blink/renderer/platform/media/web_media_player_impl.cc b/third_party/blink/renderer/platform/media/web_media_player_impl.cc
+index 839bcbcfe7..753c6fa9e3 100644
+--- a/third_party/blink/renderer/platform/media/web_media_player_impl.cc
++++ b/third_party/blink/renderer/platform/media/web_media_player_impl.cc
+@@ -819,6 +819,7 @@ void WebMediaPlayerImpl::EnteredFullscreen() {
+ }
+ 
+ void WebMediaPlayerImpl::ExitedFullscreen() {
++  compositor_->SetNvidiaVsrFullscreen(false);
+   overlay_info_.is_fullscreen = false;
+ 
+   // If we're in overlay mode, then exit it unless we're supposed to allow
+@@ -865,6 +866,8 @@ void WebMediaPlayerImpl::OnHasNativeControlsChanged(bool has_native_controls) {
+ 
+ void WebMediaPlayerImpl::OnDisplayTypeChanged(
+     WebMediaPlayer::DisplayType display_type) {
++  compositor_->SetNvidiaVsrFullscreen(
++      display_type == WebMediaPlayer::DisplayType::kFullscreen);
+   DVLOG(2) << __func__ << ": display_type=" << static_cast<int>(display_type);
+ 
+   if (surface_layer_for_video_enabled_) {

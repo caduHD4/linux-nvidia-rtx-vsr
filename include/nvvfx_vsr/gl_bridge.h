@@ -11,6 +11,8 @@ class GlVsrBridge {
   GlVsrBridge(const GlVsrBridge&)=delete;
   GlVsrBridge& operator=(const GlVsrBridge&)=delete;
   bool Run(VsrProcessor& processor,std::string* error);
+  // False means caller must retain textures and CUDA/GL contexts.
+  bool Close(std::string* error);
  private:
   struct Impl;
   explicit GlVsrBridge(std::unique_ptr<Impl> impl);

@@ -125,6 +125,13 @@ Fixar a escolha original/processado na primeira apresentação de cada ID, para 
 
 Pool inicial de três slots por sessão, uma sessão VSR ativa por GPU no MVP, limite global de 256 MiB para buffers/texturas controlados pelo adapter. Memória interna do SDK é medida à parte e uma falha de alocação desativa VSR. Outra sessão faz bypass. Um job ativo e no máximo um aguardando; demais frames seguem originais. Não acumular todos os frames decodificados antecipadamente.
 
+**Estado experimental em2026-10-06:** o pool de saídas do cliente passou para
+cinco para dar margem à continuidade; os três slots privados do GPU service e
+o máximo de dois jobs foram preservados. O bloqueio global de uma única sessão
+foi removido numa rodada anterior; o limite global256MiB ainda não é imposto.
+Consulte `docs/chromium-validation.md` para evidências e limitações atuais.
+
+
 Slots passam por free -> staging -> CUDA -> ready -> leased -> free. Slots de geração antiga e jobs atrasados continuam ocupados até conclusão segura; nunca “cancelar” liberando memória de kernel em voo. Resultados não selecionados são devolvidos assim que descartados; resultados escolhidos só após callback de liberação e fence do último leitor. Pool cheio significa bypass, nunca espera para obter slot.
 
 Queue timeout de 50 ms sem início faz bypass. Watchdog de 100 ms sem conclusão impede novas submissões e descarta publicação; não tenta interromper kernel, resetar contexto ou liberar buffers em uso. Se não houver conclusão segura, manter recursos em quarentena até teardown do processo. Erro fatal de CUDA/context loss torna o serviço indisponível; o cliente mantém original, mas não é possível prometer sobrevivência da renderização a uma falha fatal do processo GPU inteiro.

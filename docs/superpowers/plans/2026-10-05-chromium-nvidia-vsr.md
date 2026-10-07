@@ -36,11 +36,11 @@
 
 **Interfaces:** `SelectProcessorConfig(Dimensions input, Dimensions target) -> std::optional<ProcessorConfig>`; config includes input/output, quality, strength. `VsrProcessor::Create(config, sdk_root, CUcontext)`, `Submit(CudaFrameView input, CudaFrameView output)`, `Poll()`, `Drain()`; explicit context/pitch/RGBA8, one job in flight.
 
-- [ ] Write failing policy tests: 720p->1080p mode 4, 1080p native mode 11, >target bypass, vertical fit, invalid dimensions; run RED.
-- [ ] Implement policy; run CPU suite GREEN.
-- [ ] Write GPU test driving persistent buffers for modes 4/11, output nonzero and alpha/channel patterns, repeated submits, busy handling; run RED.
-- [ ] Implement dynamic loader, version checks, context/stream/event ownership, Load once; failure cleanup drains in-flight work.
-- [ ] Run GPU modes plus 10,000 frames and record p50/p95/p99/VRAM; retain diagnostic-only readback in tests. Commit core.
+- [x] Write failing policy tests: 720p->1080p mode 4, 1080p native mode 11, >target bypass, vertical fit, invalid dimensions; run RED.
+- [x] Implement policy; run CPU suite GREEN.
+- [x] Write GPU test driving persistent buffers for modes 4/11, output nonzero and alpha/channel patterns, repeated submits, busy handling; run RED.
+- [x] Implement dynamic loader, version checks, context/stream/event ownership, Load once; failure cleanup drains in-flight work.
+- [x] Run GPU modes plus 10,000 frames and record p50/p95/p99/VRAM; retain diagnostic-only readback in tests. Commit core.
 
 ### Task 2: Chromium baseline checkout/build
 
@@ -48,8 +48,8 @@
 
 **Interfaces:** checkout at `Builds/brave/chromium/src`, stable revision pinned to release JSON hash, output `out/Vsr`, system headers VFX read-only. Build script checks disk reserve and outputs logs.
 
-- [ ] Fetch depot_tools and shallow Linux-only stable Chromium revision; record exact commit before patches.
-- [ ] Configure reduced-symbol release development output with GN; use bundled clang/sysroot, no system package changes unless required.
+- [x] Fetch depot_tools and shallow Linux-only stable Chromium revision; record exact commit before patches.
+- [x] Configure reduced-symbol release development output with GN; use bundled clang/sysroot, no system package changes unless required.
 - [ ] Build `chrome` and selected media/gpu test targets; launch with separate test profile and sandbox enabled; record baseline GPU backend and actual video decoder.
 
 ### Task 3: Client policy/cache and resource probe

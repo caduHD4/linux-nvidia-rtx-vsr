@@ -26,6 +26,8 @@ class VsrProcessor {
   bool Submit(CudaFrameView input, CudaFrameView output, std::string* error);
   ProcessState Poll(std::string* error);
   bool Drain(std::string* error);
+  // False requires retaining the owning CUDA context until process exit.
+  bool Close(std::string* error);
   float LastGpuMilliseconds() const;
  private:
   struct Impl;

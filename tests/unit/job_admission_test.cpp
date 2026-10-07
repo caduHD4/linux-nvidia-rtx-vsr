@@ -26,6 +26,22 @@ int main(){try{
   queue.Quarantine(*c);
   Check(queue.disabled() && !queue.CompleteSafely(*c),"quarantine reused unsafe slot");
   Check(queue.occupied()==1,"quarantined resource dropped");
+  // Worker completion precedes owner publication. Keep A reserved, but let
+  // the serial worker start B without waiting for the owner task queue.
+  JobAdmission publishing;
+  auto pa=publishing.Reserve(7,1,0),pb=publishing.Reserve(7,2,0);
+  Check(pa && pb && publishing.Start(*pa,1),"publication setup failed");
+  Check(publishing.FinishInference(*pa),"finished inference not recorded");
+  Check(publishing.occupied()==2,"publishing released private texture early");
+  Check(!publishing.Reserve(7,3,2),"publishing slot reused before owner copy");
+  Check(publishing.Start(*pb,2),"finished inference blocked next worker job");
+  Check(!publishing.FinishInference(*pa),"publishing inference finished twice");
+  Check(publishing.FinishInference(*pb),"second inference did not finish");
+  publishing.CheckWatchdog(1000);
+  Check(!publishing.disabled(),"completed inference tripped watchdog while publishing");
+  Check(publishing.CompleteSafely(*pa),"published texture not released");
+  Check(publishing.Reserve(7,3,1000).has_value(),"published slot unavailable");
+  Check(!publishing.FinishInference(*pa),"queued frame treated as completed inference");
   JobAdmission normal;
   auto d=normal.Reserve(1,1,0);Check(normal.Start(*d,0),"normal start failed");
   normal.CheckWatchdog(100);Check(!normal.disabled(),"watchdog fired before >100ms");

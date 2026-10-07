@@ -1,0 +1,100 @@
+diff --git a/ui/gl/gl_features.cc b/ui/gl/gl_features.cc
+index 99bfd69948..824ee999d2 100644
+--- a/ui/gl/gl_features.cc
++++ b/ui/gl/gl_features.cc
+@@ -35,6 +35,8 @@
+ #endif
+ 
+ namespace features {
++
++BASE_FEATURE(kNvidiaVsrNativeEgl, base::FEATURE_DISABLED_BY_DEFAULT);
+ namespace {
+ 
+ #if BUILDFLAG(IS_ANDROID)
+diff --git a/ui/gl/gl_features.h b/ui/gl/gl_features.h
+index 9939e05487..756ca9f380 100644
+--- a/ui/gl/gl_features.h
++++ b/ui/gl/gl_features.h
+@@ -15,6 +15,9 @@
+ 
+ namespace features {
+ 
++// Experimental native NVIDIA EGL/CUDA video processing; opt-in only.
++GL_EXPORT BASE_DECLARE_FEATURE(kNvidiaVsrNativeEgl);
++
+ // Controls if GPU should synchronize presentation with vsync.
+ GL_EXPORT bool UseGpuVsync();
+ 
+diff --git a/ui/ozone/platform/wayland/gpu/wayland_surface_factory.cc b/ui/ozone/platform/wayland/gpu/wayland_surface_factory.cc
+index 2605b0e267..b457307cc1 100644
+--- a/ui/ozone/platform/wayland/gpu/wayland_surface_factory.cc
++++ b/ui/ozone/platform/wayland/gpu/wayland_surface_factory.cc
+@@ -12,6 +12,7 @@
+ #include "ui/gfx/linux/client_native_pixmap_dmabuf.h"
+ #include "ui/gfx/linux/native_pixmap_dmabuf.h"
+ #include "ui/gl/gl_bindings.h"
++#include "ui/gl/gl_features.h"
+ #include "ui/gl/gl_surface_egl.h"
+ #include "ui/gl/presenter.h"
+ #include "ui/ozone/common/egl_util.h"
+@@ -227,6 +228,11 @@ WaylandSurfaceFactory::GetAllowedGLImplementations() {
+     impls.emplace_back(gl::ANGLEImplementation::kOpenGLES);
+     impls.emplace_back(gl::ANGLEImplementation::kSwiftShader);
+     impls.emplace_back(gl::ANGLEImplementation::kVulkan);
++    // NVIDIA VSR imports decoder NativePixmaps through the native EGL display;
++    // ANGLE cannot expose every VA-API dma-buf backing as a GL texture.
++    if (base::FeatureList::IsEnabled(features::kNvidiaVideoSuperResolution) ||
++        base::FeatureList::IsEnabled(features::kNvidiaVsrNativeEgl))
++      impls.emplace_back(gl::kGLImplementationEGLGLES2);
+   }
+   return impls;
+ }
+diff --git a/ui/ozone/platform/x11/x11_surface_factory.cc b/ui/ozone/platform/x11/x11_surface_factory.cc
+index 07dd8200a4..cb6b5aa927 100644
+--- a/ui/ozone/platform/x11/x11_surface_factory.cc
++++ b/ui/ozone/platform/x11/x11_surface_factory.cc
+@@ -5,6 +5,8 @@
+ #include "ui/ozone/platform/x11/x11_surface_factory.h"
+ 
+ #include <memory>
++#include "base/feature_list.h"
++#include "ui/gl/gl_features.h"
+ 
+ #include "components/viz/common/resources/shared_image_format_utils.h"
+ #include "gpu/vulkan/buildflags.h"
+@@ -29,6 +31,11 @@
+ namespace ui {
+ namespace {
+ 
++bool NativeVsrEglEnabled() {
++  return base::FeatureList::IsEnabled(features::kNvidiaVsrNativeEgl) ||
++         base::FeatureList::IsEnabled(features::kNvidiaVideoSuperResolution);
++}
++
+ enum class NativePixmapSupportType {
+   // Importing native pixmaps not supported.
+   kNone,
+@@ -174,14 +181,20 @@ X11SurfaceFactory::~X11SurfaceFactory() = default;
+ 
+ std::vector<gl::GLImplementationParts>
+ X11SurfaceFactory::GetAllowedGLImplementations() {
+-  return std::vector<gl::GLImplementationParts>{
+-      gl::GLImplementationParts(gl::kGLImplementationEGLANGLE),
+-  };
++  std::vector<gl::GLImplementationParts> allowed{
++      gl::GLImplementationParts(gl::kGLImplementationEGLANGLE)};
++  if (NativeVsrEglEnabled())
++    allowed.emplace_back(gl::kGLImplementationEGLGLES2);
++  return allowed;
+ }
+ 
+ GLOzone* X11SurfaceFactory::GetGLOzone(
+     const gl::GLImplementationParts& implementation) {
+   switch (implementation.gl) {
++    case gl::kGLImplementationEGLGLES2:
++      if (!NativeVsrEglEnabled())
++        return nullptr;
++      return egl_implementation_.get();
+     case gl::kGLImplementationEGLANGLE:
+       return egl_implementation_.get();
+     default:

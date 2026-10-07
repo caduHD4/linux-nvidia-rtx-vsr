@@ -1,0 +1,36 @@
+diff --git a/media/gpu/vaapi/BUILD.gn b/media/gpu/vaapi/BUILD.gn
+index 0dae890813..76c3136180 100644
+--- a/media/gpu/vaapi/BUILD.gn
++++ b/media/gpu/vaapi/BUILD.gn
+@@ -14,7 +14,17 @@ assert(use_vaapi)
+ # Ensure Ozone is the default configuration.
+ assert(use_ozone)
+ 
+-generate_stubs("libva_stubs") {
++# A component build must have one process-wide libva dispatch table. Otherwise
++# a decoder in one DSO can call a weak stub whose private table was initialized
++# only in another DSO (notably ScopedVABuffer destruction during AV1 decode).
++_libva_stubs_target = "libva_stubs"
++if (is_component_build) {
++  _libva_stubs_target = "libva_stubs_source"
++}
++generate_stubs(_libva_stubs_target) {
++  if (is_component_build) {
++    configs = [ "//build/config/gcc:symbol_visibility_default" ]
++  }
+   extra_header = "va_stub_header.fragment"
+   sigs = [ "va.sigs" ]
+   if (is_chromeos) {
+@@ -29,6 +39,12 @@ generate_stubs("libva_stubs") {
+   ]
+ }
+ 
++if (is_component_build) {
++  shared_library("libva_stubs") {
++    public_deps = [ ":libva_stubs_source" ]
++  }
++}
++
+ source_set("vaapi") {
+   defines = [ "MEDIA_GPU_IMPLEMENTATION" ]
+   sources = [

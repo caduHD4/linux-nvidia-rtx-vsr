@@ -136,3 +136,27 @@ registration/device validation; the host diagnostic pins NVIDIA's GLVND EGL
 vendor and X11 platform explicitly. This is not yet validation of Chromium
 SharedImage backing access, thread transfer or its sandbox. Current GPU CTest
 suite is 8/8, including native GL->CUDA->VFX->GL image validation.
+
+## 2026-10-06 — Local Chromium integration resumed
+
+The cloud environment ran out of memory; work resumed on the original Linux
+machine. The persistent core, native EGL/CUDA bridge, eligibility, admission
+and presentation cache exist. The latest standalone suite passed **12/12**,
+including a CUDA synchronization failure that verifies bridge teardown retains
+registered resources. Python tests passed **6/6**.
+
+The media IPC client, GPU service/worker, channel interface and pre-sandbox hook
+are implemented in `chromium/overlay`. Updated client, renderer, IPC tests and
+worker objects compile with Chromium's bundled compiler; the GPU service
+library linked after using Chromium's GL framebuffer dispatch bindings.
+The selected `media_unittests` suite passed **53/53**, covering the NVIDIA IPC
+client/cache and existing VideoRendererImpl regressions. The final
+`chrome` executable, sandbox SDK loading and real VSR playback remain pending.
+Brave portability work has not started.
+
+Test launchers and a local DevTools pipe playback diagnostic are prepared under
+`tools/chromium`. They keep the sandbox enabled and store profiles/media/logs
+outside Git. Synthetic MSE fixtures now cover a 720p-to-1080p configuration
+change. These tools have passed syntax checks; actual browser execution is
+still pending. Earlier milestone timings in this document describe standalone
+SDK tests, not browser performance.

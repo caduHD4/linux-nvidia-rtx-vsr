@@ -11,6 +11,9 @@ class JobAdmission {
   std::optional<std::size_t> Reserve(std::uint64_t generation,
       std::uint64_t frame_id,std::uint64_t now_ms);
   bool Start(std::size_t slot,std::uint64_t now_ms);
+  // Physical worker completion ends inference, but publication still owns
+  // the private texture. This does not make the reservation reusable.
+  bool FinishInference(std::size_t slot);
   bool CompleteSafely(std::size_t slot);
   void Quarantine(std::size_t slot);
   void CheckWatchdog(std::uint64_t now_ms);
@@ -18,7 +21,7 @@ class JobAdmission {
   bool disabled() const { return disabled_; }
   std::size_t occupied() const;
  private:
-  enum class State { Free, Queued, Running, Quarantined };
+  enum class State { Free, Queued, Running, Publishing, Quarantined };
   struct Slot {
     State state=State::Free;
     std::uint64_t generation=0,id=0,queued_ms=0,started_ms=0;

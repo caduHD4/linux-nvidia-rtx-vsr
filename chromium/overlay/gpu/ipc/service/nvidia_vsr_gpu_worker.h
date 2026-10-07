@@ -9,6 +9,7 @@
 #include "ui/gl/gl_bindings.h"
 namespace gl { class GLContext; class GLSurface; }
 namespace gpu {
+struct NvidiaVsrSourceFence { GLsync value; };
 struct NvidiaVsrWorkerResult {
   bool success=false;
   bool quarantine=false;
@@ -20,12 +21,13 @@ struct NvidiaVsrWorkerResult {
 // SharedImage representation, VideoFrame, mailbox, or owning-sequence access.
 class NvidiaVsrGpuWorker {
  public:
-  NvidiaVsrGpuWorker(scoped_refptr<gl::GLContext> context,
-                     scoped_refptr<gl::GLSurface> surface);
+  // The owner retains these non-thread-safe ref-counted GL objects until a
+  // physically safe Shutdown acknowledgement (or quarantines them on failure).
+  NvidiaVsrGpuWorker(gl::GLContext* context, gl::GLSurface* surface);
   ~NvidiaVsrGpuWorker();
   void ResetSlot(std::size_t slot,base::OnceCallback<void(bool)> callback);
   void Run(std::size_t slot,nvvfx_vsr::ProcessorConfig config,
-           GLuint input,GLuint output,GLsync source_fence,
+           GLuint input,GLuint output,NvidiaVsrSourceFence source_fence,
            base::OnceClosure source_ready,
            base::OnceCallback<bool()> may_start,
            base::OnceCallback<void(NvidiaVsrWorkerResult)> done);

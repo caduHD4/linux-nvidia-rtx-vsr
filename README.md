@@ -4,7 +4,7 @@ Experimental NVIDIA RTX Video Super Resolution integration for Chromium on Linux
 Locally tested on CachyOS/Wayland with an RTX 4070 SUPER. A Brave port is planned.
 
 **No installable browser release yet.** This repository contains source, patches,
-and build tools. Some local playback improvements have not reached `main`.
+and build tools. The latest integration and preview installer are included; binary release validation is ongoing.
 
 ## Requirements
 
@@ -50,8 +50,8 @@ permissions and key scopes. See [NVIDIA's installation guide](https://docs.nvidi
 
 For Chromium setup, patches, and build instructions, see
 [the development handoff](docs/CLOUD_HANDOFF.md).
-The SDK path is currently embedded at build time; changing `VFXSDK_ROOT` when
-launching someone else's binary does not relocate it.
+Set `VFXSDK_ROOT` to your absolute `VideoFX` directory at build or launch time.
+See [preview installation and packaging](docs/distribution.md) for the installer.
 
 To build and test the standalone GPU backend:
 
@@ -65,8 +65,11 @@ ctest --test-dir build/gpu -L gpu --output-on-failure
 
 Local playback supports fullscreen-only enhancement and up to 4K output.
 Protected and HDR content bypass processing. Other GPUs and distributions still
-need validation. The local GPU diagnostic reported `sandboxed=false`; security
-and portability work remains before a public browser release.
+need validation. Working local playback previously reported `sandboxed=false`.
+The current sandbox-enabled probe applies seccomp to every GPU thread, but NVIDIA
+NGX feature discovery fails (`-14`); the SDK uses parent-relative paths rejected
+by Chromium’s file broker. No browser
+binary will be released until real enhancement works with the GPU sandbox active.
 
 NVIDIA libraries and models are downloaded separately. Redistribution depends on
 [NVIDIA's license terms](https://www.nvidia.com/en-us/agreements/enterprise-software/product-specific-terms-for-ai-products/)

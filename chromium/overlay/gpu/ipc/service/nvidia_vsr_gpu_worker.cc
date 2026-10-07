@@ -1,8 +1,8 @@
+#include <cuda.h>
+#include <cudaGL.h>
 #include "gpu/ipc/service/nvidia_vsr_gpu_worker.h"
 #include <array>
 #include <dlfcn.h>
-#include <cuda.h>
-#include <cudaGL.h>
 #include "base/memory/raw_ptr.h"
 #include "base/sequence_checker.h"
 #include "base/scoped_native_library.h"
@@ -21,8 +21,8 @@ bool SameConfig(const nvvfx_vsr::ProcessorConfig& a,
 }
 }
 struct NvidiaVsrGpuWorker::Impl {
-  scoped_refptr<gl::GLContext> gl_context;
-  scoped_refptr<gl::GLSurface> gl_surface;
+  raw_ptr<gl::GLContext> gl_context;
+  raw_ptr<gl::GLSurface> gl_surface;
   raw_ptr<CUctx_st> cuda_context=nullptr;
   CUdevice device=-1;
   base::ScopedNativeLibrary driver;
@@ -71,10 +71,9 @@ struct NvidiaVsrGpuWorker::Impl {
     return true;
   }
 };
-NvidiaVsrGpuWorker::NvidiaVsrGpuWorker(scoped_refptr<gl::GLContext> context,
-                                     scoped_refptr<gl::GLSurface> surface)
+NvidiaVsrGpuWorker::NvidiaVsrGpuWorker(gl::GLContext* context, gl::GLSurface* surface)
     :impl_(std::make_unique<Impl>()) {
-  impl_->gl_context=std::move(context);impl_->gl_surface=std::move(surface);
+  impl_->gl_context=context;impl_->gl_surface=surface;
   DETACH_FROM_SEQUENCE(impl_->sequence_checker);
 }
 NvidiaVsrGpuWorker::~NvidiaVsrGpuWorker() {
@@ -88,14 +87,16 @@ void NvidiaVsrGpuWorker::ResetSlot(std::size_t slot,
     std::move(callback).Run(true);return;
   }
   bool safe=slot<impl_->bridges.size() && impl_->Current(&error);
+  if(safe) safe=impl_->bridges[slot]->Close(&error);
   if(safe) impl_->bridges[slot].reset();
   else impl_->quarantined=true;
   std::move(callback).Run(safe);
 }
 void NvidiaVsrGpuWorker::Run(std::size_t slot,nvvfx_vsr::ProcessorConfig cfg,
-    GLuint input,GLuint output,GLsync source_fence,base::OnceClosure source_ready,
+    GLuint input,GLuint output,NvidiaVsrSourceFence source_fence_handle,base::OnceClosure source_ready,
     base::OnceCallback<bool()> may_start,
     base::OnceCallback<void(NvidiaVsrWorkerResult)> done) {
+  GLsync source_fence=source_fence_handle.value;
   NvidiaVsrWorkerResult result;
   auto& p=*impl_;
   // Establish physical completion of the owner's source-copy GL commands
@@ -121,8 +122,17 @@ void NvidiaVsrGpuWorker::Run(std::size_t slot,nvvfx_vsr::ProcessorConfig cfg,
     std::move(done).Run(std::move(result));return;
   }
   if(!p.processor || !SameConfig(p.config,cfg)) {
+    if(p.processor && !p.processor->Close(&result.status)) {
+      p.quarantined=true;result.quarantine=true;
+      std::move(done).Run(std::move(result));return;
+    }
     p.processor.reset();
-    p.processor=nvvfx_vsr::VsrProcessor::Create(cfg,NVVFX_VSR_SDK_ROOT,
+    auto root = nvvfx_vsr::ResolveSdkRoot(NVVFX_VSR_SDK_ROOT);
+    if (!root) {
+      result.status="VFXSDK_ROOT must be an absolute SDK directory";
+      std::move(done).Run(std::move(result));return;
+    }
+    p.processor=nvvfx_vsr::VsrProcessor::Create(cfg,*root,
                                               p.cuda_context.get(),&result.status);
     p.config=cfg;
     if(!p.processor) {
@@ -163,11 +173,24 @@ void NvidiaVsrGpuWorker::Shutdown(base::OnceCallback<void(bool)> callback) {
   if(!p.Current(&error)) {
     (void)impl_.release();std::move(callback).Run(false);return;
   }
-  for(auto& bridge:p.bridges) bridge.reset();
+  for(auto& bridge:p.bridges) {
+    if(bridge && !bridge->Close(&error)) {
+      p.quarantined=true;
+      (void)impl_.release();std::move(callback).Run(false);return;
+    }
+    bridge.reset();
+  }
+  if(p.processor && !p.processor->Close(&error)) {
+    p.quarantined=true;
+    (void)impl_.release();std::move(callback).Run(false);return;
+  }
   p.processor.reset();
   CUdevice device=p.device;
   bool safe=p.set_current(nullptr)==CUDA_SUCCESS && p.release(device)==CUDA_SUCCESS;
   p.gl_context->ReleaseCurrent(p.gl_surface.get());
+  // ReleaseCurrent is void and may mark a context lost without unbinding EGL.
+  // Check the physical binding before the owner may destroy its GL objects.
+  safe &= eglGetCurrentContext() != static_cast<EGLContext>(p.gl_context->GetHandle());
   if(safe) {
     p.driver.reset();impl_.reset();
   } else (void)impl_.release();

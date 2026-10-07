@@ -28,4 +28,16 @@ int main(){try{
   cache.Complete(cache.generation(),203,enhanced);
   Check(!cache.Complete(cache.generation(),200,enhanced),"eviction lost last frame decision");
   Check(cache.Select(200,original)==original,"eviction changed repeated frame");
+  Cache skipped(8);
+  auto past=std::make_shared<int>(10),future=std::make_shared<int>(13);
+  Check(skipped.Complete(skipped.generation(),90,past),"past completion rejected");
+  Check(skipped.Complete(skipped.generation(),80,future),"future completion rejected");
+  skipped.Select(100,std::make_shared<int>(12));
+  Check(skipped.DiscardCompletedIf([](const auto& value){return *value<12;})==1,
+        "skipped output not discarded");
+  Check(past.use_count()==1,"skipped output still holds GPU lease");
+  Check(!skipped.Complete(skipped.generation(),90,past),"discarded result accepted again");
+  Check(skipped.Select(80,original)==future,"future output incorrectly discarded");
+  for(int refresh=0;refresh<180;++refresh)
+    Check(skipped.Select(80,original)==future,"pruning changed repeated presentation");
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

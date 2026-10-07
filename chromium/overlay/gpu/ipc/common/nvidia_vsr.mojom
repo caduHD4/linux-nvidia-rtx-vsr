@@ -4,7 +4,7 @@ import "gpu/ipc/common/sync_token.mojom";
 import "ui/gfx/geometry/mojom/geometry.mojom";
 import "ui/gfx/mojom/color_space.mojom";
 
-struct NvidiaVsrRequest {
+struct NvidiaVsrFrameRequest {
   uint64 generation;
   uint64 frame_id;
   uint64 release_count;
@@ -21,6 +21,6 @@ struct NvidiaVsrRequest {
 };
 // Control/resources only. No CPU pixel data, texture IDs or device pointers.
 interface NvidiaVsr {
-  Process(NvidiaVsrRequest request) =>
+  Process(NvidiaVsrFrameRequest request) =>
       (bool success, string status, SyncToken ready_token, float gpu_ms);
 };

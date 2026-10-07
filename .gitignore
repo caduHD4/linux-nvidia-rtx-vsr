@@ -11,7 +11,6 @@ __pycache__/
 
 # External checkouts, SDK distributions, generated media and credentials
 /depot_tools/
-/src/
 /out/
 /cache/
 /media/

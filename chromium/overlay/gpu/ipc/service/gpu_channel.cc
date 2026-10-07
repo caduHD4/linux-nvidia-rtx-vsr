@@ -534,7 +534,7 @@ void GpuChannelMessageFilter::CreateNvidiaVsr(
   }
   scheduler_->ScheduleTask(Scheduler::Task(
       gpu_channel_->shared_image_stub()->sequence(),
-      base::BindOnce(&GpuChannel::CreateNvidiaVsr, gpu_channel_->AsWeakPtr(),
+      base::BindOnce(&gpu::GpuChannel::CreateNvidiaVsr, gpu_channel_->AsWeakPtr(),
           source_route, output_route, std::move(receiver),
           base::BindPostTask(base::SingleThreadTaskRunner::GetCurrentDefault(),
                              std::move(callback))), {}, SyncToken()));

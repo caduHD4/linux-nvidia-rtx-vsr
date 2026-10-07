@@ -1,0 +1,46 @@
+# Linux preview packaging
+
+No browser binary Release is available yet. The current sandbox-enabled probe
+reaches NVIDIA NGX initialization, but feature discovery fails (`-14`): the
+SDK probes parent-relative paths rejected by Chromium’s file broker. Publish binaries only after actual enhancement passes
+with the GPU sandbox active on every thread.
+
+Initial target: Linux x86_64, Arch/CachyOS, Wayland and NVIDIA RTX 40. Python 3.11+, working NVIDIA driver, libva-nvidia-driver, and NVIDIA VFX Core + nvvfxvideosuperres 1.3.0.0 are required. Other configurations are unverified. The NVIDIA SDK is not bundled.
+
+## End-user installation (when a binary Release is available)
+
+Download the archive and its published SHA256 file from this repository's Releases. Verify the downloaded archive with `sha256sum -c <archive>.sha256`, then extract it. Install the SDK using the README, then run from the extracted package:
+
+```bash
+python3 install.py --sdk "$HOME/.local/opt/nvidia-vfx/VideoFX"
+```
+
+Open **Chromium RTX VSR (Experimental)** in the application menu. This uses a separate profile and does not replace your default browser. Select 4K (default), 1440p or 1080p with `--target 2160`, `--target 1440` or `--target 1080` when installing. Close the browser before changing its configuration. Processing runs only in fullscreen.
+
+SDK path and preset are stored in `$XDG_CONFIG_HOME/linux-nvidia-vsr/config.json` (default `~/.config`). `VFXSDK_ROOT` and `NVVFX_VSR_TARGET_HEIGHT` override them. `~/.local/bin/linux-nvidia-vsr --check` checks prerequisites; it does not prove playback/inference.
+
+Uninstall with `python3 ~/.local/share/linux-nvidia-vsr/install.py --uninstall` (adjust for custom XDG_DATA_HOME). The NVIDIA SDK and separate browser profile are kept.
+
+## Build the package
+
+Build Chromium at the pinned revision and generate credits using `tools/licenses/licenses.py credits --gn-out-dir out/Vsr --gn-target //chrome:chrome /external/path/credits.html` from the Chromium checkout.
+
+```bash
+python3 tools/release/package.py --source /path/to/chromium/src \
+  --output /external/path/linux-nvidia-vsr-preview \
+  --version 0.1.0-preview.1 --credits /external/path/credits.html
+```
+
+Output must remain outside the source repository. It contains browser executables, component libraries/resources, project/Chromium license notices, generated credits, scripts and SHA256SUMS. It excludes NVIDIA SDK, profiles and generated test videos. Compress the resulting directory and generate a SHA256 for the archive. Each GitHub release asset must remain below 2 GiB.
+
+## Release gates
+
+Do not upload a browser binary unless relocated-package playback and GPU sandbox validation pass. Confirm actual GPU thread Seccomp status in addition to SystemInfo. The installer and packaging tools can be published while this gate is blocked, but no installable-browser claim is allowed. A source Git push uses SSH; creating/uploading GitHub Release assets additionally needs authenticated GitHub API access.
+
+## Development sandbox investigation
+
+`NVVFX_VSR_SANDBOX_EXPERIMENT=1 tools/chromium/run-vsr.sh` opts into early
+sandbox initialization and TSYNC. This is a diagnostic path, not a usable release.
+The development launcher retains the previously tested local path by default;
+its GPU isolation remains unvalidated. The packaged launcher always requests
+an early sandbox and fatal sandbox initialization failures.

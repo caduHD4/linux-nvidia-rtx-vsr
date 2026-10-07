@@ -2,7 +2,28 @@
 set -euo pipefail
 project_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
 build_root="${NVVFX_BROWSER_BUILD_ROOT:-$project_root/build/browser}"
-export PATH="$build_root/depot_tools:$PATH"
+inherited_path="$PATH"
+filtered_path=''
+have_path_entry=0
+while [[ "$inherited_path" == *:* ]]; do
+  path_entry=${inherited_path%%:*}
+  inherited_path=${inherited_path#*:}
+  if [[ "$path_entry" == *[[:space:]]* ]]; then continue; fi
+  if (( have_path_entry )); then filtered_path+=:; fi
+  filtered_path+="$path_entry"
+  have_path_entry=1
+done
+path_entry=$inherited_path
+if [[ "$path_entry" != *[[:space:]]* ]]; then
+  if (( have_path_entry )); then filtered_path+=:; fi
+  filtered_path+="$path_entry"
+  have_path_entry=1
+fi
+if (( have_path_entry )); then
+  export PATH="$build_root/depot_tools:$filtered_path"
+else
+  export PATH="$build_root/depot_tools"
+fi
 export DEPOT_TOOLS_UPDATE=0
 export CIPD_CACHE_DIR="$build_root/cache/cipd"
 export VPYTHON_VIRTUALENV_ROOT="$build_root/cache/vpython"
@@ -36,4 +57,5 @@ args = ['is_debug=false', 'is_component_build=true', 'symbol_level=0',
 Path('out/Vsr/args.gn').write_text('\n'.join(args) + '\n')
 GNARGS
 gn gen out/Vsr
-autoninja -C out/Vsr -j"${NVVFX_BUILD_JOBS:-8}" chrome "$@"
+if (( $# == 0 )); then set -- chrome; fi
+autoninja -C out/Vsr -j"${NVVFX_BUILD_JOBS:-8}" "$@"

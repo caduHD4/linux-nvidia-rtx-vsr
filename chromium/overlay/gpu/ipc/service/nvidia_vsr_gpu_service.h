@@ -8,7 +8,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
-#include "base/memory/on_task_runner_deleter.h"
+#include "base/task/sequenced_task_runner.h"
 #include "base/synchronization/lock.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/timer/timer.h"
@@ -33,7 +33,7 @@ class NvidiaVsrGpuService
                       mojo::PendingReceiver<mojom::NvidiaVsr> receiver);
   bool Initialize();
   void Close();
-  void Process(mojom::NvidiaVsrRequestPtr request,
+  void Process(mojom::NvidiaVsrFrameRequestPtr request,
                 ProcessCallback callback) override;
  private:
   friend class base::RefCountedDeleteOnSequence<NvidiaVsrGpuService>;
@@ -46,6 +46,7 @@ class NvidiaVsrGpuService
   void PollSourceFence(uint64_t count);
   void FinishSource(uint64_t count);
   void WaitForOutput(uint64_t count);
+  void OnWorkerFinished(uint64_t count,std::size_t slot,NvidiaVsrWorkerResult result);
   void OnWorkerDone(uint64_t count,NvidiaVsrWorkerResult result);
   void FinishOutput(uint64_t count);
   bool Publish(Job& job);
@@ -62,6 +63,10 @@ class NvidiaVsrGpuService
   scoped_refptr<SharedContextState> context_;
   base::WeakPtr<SharedImageFactory> channel_factory_;
   std::unique_ptr<SharedImageRepresentationFactory> representations_;
+  // GLContext/GLSurface/GLShareGroup references stay on the creating sequence.
+  // The worker only borrows them; unsafe shutdown retains this service.
+  scoped_refptr<gl::GLContext> worker_context_;
+  scoped_refptr<gl::GLSurface> worker_surface_;
   std::unique_ptr<NvidiaVsrGpuWorker,base::OnTaskRunnerDeleter> worker_;
   mojo::Receiver<mojom::NvidiaVsr> receiver_;
   CommandBufferId source_id_,output_id_;

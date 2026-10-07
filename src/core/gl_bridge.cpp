@@ -46,13 +46,28 @@ struct GlVsrBridge::Impl {
   bool Synchronize() {
     return !stream || cuStreamSynchronize_fn(stream)==CUDA_SUCCESS;
   }
-  void ReleaseGpuResources() {
-    if(mapped){(void)cuGraphicsUnmapResources_fn(2,resources,stream);(void)Synchronize();mapped=false;}
-    for(auto& r:resources) if(r){cuGraphicsUnregisterResource_fn(r);r=nullptr;}
-    for(auto& ptr:linear) if(ptr){cuMemFree_fn(ptr);ptr=0;}
-    if(stream){cuStreamDestroy_fn(stream);stream=nullptr;}
+  bool ReleaseGpuResources() {
+    if(mapped) {
+      if(cuGraphicsUnmapResources_fn(2,resources,stream)!=CUDA_SUCCESS ||
+         !Synchronize()) return false;
+      mapped=false;
+    }
+    for(auto& r:resources) if(r) {
+      if(cuGraphicsUnregisterResource_fn(r)!=CUDA_SUCCESS) return false;
+      r=nullptr;
+    }
+    for(auto& ptr:linear) if(ptr) {
+      if(cuMemFree_fn(ptr)!=CUDA_SUCCESS) return false;
+      ptr=0;
+    }
+    if(stream) {
+      if(cuStreamDestroy_fn(stream)!=CUDA_SUCCESS) return false;
+      stream=nullptr;
+    }
+    return true;
   }
   ~Impl(){ReleaseGpuResources();if(library) dlclose(library);}
+
 };
 GlVsrBridge::GlVsrBridge(std::unique_ptr<Impl> impl):impl_(std::move(impl)){}
 std::unique_ptr<GlVsrBridge> GlVsrBridge::Create(ProcessorConfig cfg,CUcontext context,
@@ -125,21 +140,29 @@ bool GlVsrBridge::Run(VsrProcessor& processor,std::string* error) {
     return false;
   }
 }
-GlVsrBridge::~GlVsrBridge(){
-  if(!impl_)return;
-  if(impl_->failed){(void)impl_.release();return;}
+bool GlVsrBridge::Close(std::string* error) {
+  if(!impl_) return true;
+  auto fail=[&] {
+    impl_->failed=true;
+    if(error) *error="CUDA GL bridge teardown could not complete safely";
+    return false;
+  };
+  if(impl_->failed) return fail();
   bool pushed=false;
-  if(!impl_->Current()){
-    if(impl_->cuCtxPushCurrent_fn(impl_->context)!=CUDA_SUCCESS){(void)impl_.release();return;}
+  if(!impl_->Current()) {
+    if(impl_->cuCtxPushCurrent_fn(impl_->context)!=CUDA_SUCCESS) return fail();
     pushed=true;
   }
   auto pop=impl_->cuCtxPopCurrent_fn;
-  if(!impl_->Synchronize()){
-    (void)impl_.release();
-    if(pushed){CUcontext previous=nullptr;(void)pop(&previous);}return;
+  bool safe=impl_->Synchronize() && impl_->ReleaseGpuResources();
+  if(pushed) {
+    CUcontext previous=nullptr;
+    safe=(pop(&previous)==CUDA_SUCCESS) && safe;
   }
-  impl_->ReleaseGpuResources();
-  if(pushed){CUcontext previous=nullptr;(void)pop(&previous);}
-  impl_.reset();
+  if(!safe) return fail();
+  impl_.reset();return true;
+}
+GlVsrBridge::~GlVsrBridge(){
+  if(!Close(nullptr)) (void)impl_.release();
 }
 }
