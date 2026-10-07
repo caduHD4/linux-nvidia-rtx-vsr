@@ -7,6 +7,19 @@ Locally tested on CachyOS/Wayland with an RTX 4070 SUPER. A Brave port is planne
 Use it for isolated evaluation, not everyday browsing. Renderer sandbox status is
 separate. NVIDIA libraries and models are not included.
 
+## Screenshots — 1080p → 4K
+
+1080p video processed at 3840×2160, then displayed on a 1920×1080 monitor.
+These screenshots are captured at display resolution. Click an image to view full size.
+
+**YouTube**
+
+[![YouTube: 1080p video enhanced with 4K supersampling](docs/screenshots/youtube-1080p-to-4k.png)](docs/screenshots/youtube-1080p-to-4k.png)
+
+**Anime player**
+
+[![Anime player: 1080p video enhanced with 4K supersampling](docs/screenshots/anime-1080p-to-4k.png)](docs/screenshots/anime-1080p-to-4k.png)
+
 ## Install the preview
 
 Download the Linux archive and checksum from [Releases](https://github.com/caduHD4/linux-nvidia-rtx-vsr/releases).
