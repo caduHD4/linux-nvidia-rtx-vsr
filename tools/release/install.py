@@ -23,12 +23,22 @@ def main():
     if os.geteuid() == 0:
         parser.error('Run as your normal desktop user, without sudo.')
     source = Path(__file__).resolve().parent
+    try:
+        info_data = json.loads((source/'BUILD-INFO.json').read_text())
+        browser_kind = info_data.get('browser', 'chromium')
+    except (OSError, ValueError, AttributeError):
+        parser.error('Missing or invalid release BUILD-INFO.json.')
+    identities = {'chromium': ('linux-nvidia-vsr', 'Chromium'),
+                  'brave': ('linux-nvidia-brave-vsr', 'Brave')}
+    if not isinstance(browser_kind, str) or browser_kind not in identities:
+        parser.error('Unsupported release browser identity.')
+    app_id, display_name = identities[browser_kind]
     data = Path(os.environ.get('XDG_DATA_HOME', Path.home()/'.local/share')).expanduser()
-    config = Path(os.environ.get('XDG_CONFIG_HOME', Path.home()/'.config')).expanduser()/'linux-nvidia-vsr'
+    config = Path(os.environ.get('XDG_CONFIG_HOME', Path.home()/'.config')).expanduser()/app_id
     bindir = Path.home()/'.local/bin'
-    destination = data/'linux-nvidia-vsr'
-    wrapper = bindir/'linux-nvidia-vsr'
-    desktop = data/'applications/linux-nvidia-vsr.desktop'
+    destination = data/app_id
+    wrapper = bindir/app_id
+    desktop = data/'applications'/(app_id+'.desktop')
     config_file = config/'config.json'
     ownership_file = config/'installed-files.json'
     managed = {'command': wrapper, 'desktop': desktop, 'config': config_file}
@@ -48,7 +58,7 @@ def main():
                 p.unlink()
         shutil.rmtree(destination)
         ownership_file.unlink(missing_ok=True)
-        print('Removed Chromium VSR. Your browser profile and NVIDIA SDK were kept.')
+        print('Removed '+display_name+' VSR. Your browser profile and NVIDIA SDK were kept.')
         return
     sdk = args.sdk or Path(os.environ.get('VFXSDK_ROOT', Path.home()/'.local/opt/nvidia-vfx/VideoFX'))
     sdk = sdk.expanduser().resolve()
@@ -58,7 +68,7 @@ def main():
     if sdk == Path('/') or not all((sdk/p).is_file() for p in required):
         parser.error('Install NVIDIA VFX Core + VideoSuperRes 1.3.0.0 first; then use --sdk /path/to/VideoFX. See README.md.')
     info = source/'BUILD-INFO.json'
-    if not info.is_file() or not (source/'browser/chrome').is_file():
+    if not info.is_file() or not (source/'browser'/('brave' if browser_kind == 'brave' else 'chrome')).is_file():
         parser.error('Run install.py from an extracted browser release, not the source repository.')
     checksums = source/'SHA256SUMS'
     if not checksums.is_file():
@@ -90,7 +100,7 @@ def main():
     if listed != files:
         parser.error('Unlisted release files: '+', '.join(sorted(files-listed)))
     if wrapper.exists() and repr(str(destination/'launch.py')) not in wrapper.read_text():
-        parser.error('An unrelated linux-nvidia-vsr command already exists; it was not overwritten.')
+        parser.error('An unrelated '+app_id+' command already exists; it was not overwritten.')
     data.mkdir(parents=True, exist_ok=True)
     if destination.exists():
         if not (destination/'BUILD-INFO.json').is_file() or (destination/'BUILD-INFO.json').read_bytes() != info.read_bytes():
@@ -107,11 +117,11 @@ def main():
     config_file.write_text(json.dumps({'sdk': str(sdk), 'target': args.target}, indent=2)+'\n')
     config_file.chmod(0o600)
     desktop.parent.mkdir(parents=True, exist_ok=True)
-    desktop.write_text('[Desktop Entry]\nType=Application\nName=Chromium RTX VSR (Experimental)\nExec='+desktop_quote(wrapper)+' %U\nIcon='+str(destination/'icon.png')+'\nTerminal=false\nCategories=Network;WebBrowser;\nStartupNotify=true\n')
+    desktop.write_text('[Desktop Entry]\nType=Application\nName='+display_name+' RTX VSR (Experimental)\nExec='+desktop_quote(wrapper)+' %U\nIcon='+str(destination/'icon.png')+'\nTerminal=false\nCategories=Network;WebBrowser;\nStartupNotify=true\n')
     ownership_file.write_text(json.dumps({name: hashlib.sha256(p.read_bytes()).hexdigest()
                                          for name, p in managed.items()}, indent=2)+'\n')
     ownership_file.chmod(0o600)
-    print('Installed. Open Chromium RTX VSR (Experimental) from your app menu.\nOr run: '+str(wrapper)+'\nUninstall: python3 '+str(destination/'install.py')+' --uninstall')
+    print('Installed. Open '+display_name+' RTX VSR (Experimental) from your app menu.\nOr run: '+str(wrapper)+'\nUninstall: python3 '+str(destination/'install.py')+' --uninstall')
 
 
 if __name__ == '__main__':

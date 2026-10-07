@@ -358,3 +358,50 @@ de falha heurística. Usar gate DOM; remover traces temporários antes de relink
 Binário final sem traces temporários: validation/vsr-1791332743690718141/report.json, playback20s1080p30→1440 passou continuidade,480 seleções. Chromium interativo reaberto com --restore-last-session e padrão1440.
 
 Pedido do usuário: alvo padrão alterado de1440 para2160 (3840×2160), mantendo VSR_ULTRA4, strength1.0, sharpen0.35 e fullscreen-only. Presets1080/1440 continuam disponíveis. Sem execução de testes por instrução explícita; qualidade/desempenho4K serão avaliados pelo usuário.
+
+
+## 2026-10-07 — Brave port built and playback validated
+
+User authorized autonomous delivery of a functional Brave port and optional
+automatic upstream updates. Official Brave v1.96.61 pins Chromium
+154.0.8037.98 (b859317bf11f6be47f9b7799ec690a0a42a1fb33); compared with the
+tested .97 pin, tracked Chromium source differs only in chrome/VERSION.
+A separate source tree under /home/caduhd4/Builds/brave/port preserves the
+working Chromium output and all original user profiles. Official Brave patches
+were applied first, then the exported VSR delta passed clean application.
+
+The port has pinned bootstrap/apply/build/run tools, distinct package/install
+identity and playback-check browser selection. Python regression suite:46/46
+passed. Brave compiled successfully (2,626 steps, 23m06s) to
+`/home/caduhd4/Builds/brave/port/src/out/BraveVsr/brave`; the executable
+reports `Brave Browser Development 154.1.96.0`. A local H.264 1080p30 HTML5
+fullscreen playback on RTX 4070 SUPER / driver 615.71.09 decoded 1920x1080
+and selected 480 enhanced frames after warmup. Consecutive post-warmup windows
+reported 120/120 enhanced selections without original frames or switches.
+After exiting fullscreen, 178 additional frames decoded with no new enhanced
+selection events. This validates the Brave binary and fullscreen-only VSR path.
+
+The GPU process reported `sandboxed=false`; inference with the GPU sandbox
+active remains unvalidated. Fullscreen-exit sampling is based on selection log
+events every120 frames, not exact per-frame output measurement. The pinned
+Ninja redirect_cc bootstrap fails against patched base headers, so builds use
+the official default Siso path. Cargo requires libcurl-gnutls on CachyOS; the
+local build used an independently extracted, signature-verified CachyOS
+package under external tools/. No SDK or build artifacts are included in Git.
+
+Automatic hosted GitHub delivery is omitted as permitted by the user: standard
+runner resources, six-hour jobs and external SDK/RTX validation requirements
+do not support a reliable turnkey setup. See docs/brave.md for launch/build
+instructions and the sandbox limitation.
+
+## 2026-10-07 — Brave performance build approved interactively
+
+Rebuilt Brave with `dcheck_always_on=false` and
+`enable_expensive_dchecks=false`, retaining the component build, native EGL,
+validating command decoder and the existing fullscreen-only 2160 VSR path.
+Local Siso build completed successfully in 3h12m38s (27,626 steps).
+The user tested this binary and reported smooth browser interaction. This is
+subjective acceptance, not a controlled performance benchmark; no PGO,
+non-component build or passthrough decoder improvement is claimed.
+Publication regression check: Python 48/48 passed. NVIDIA SDK and build outputs
+remain external.

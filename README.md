@@ -1,7 +1,8 @@
 # NVIDIA RTX VSR on Linux
 
-Experimental NVIDIA RTX Video Super Resolution integration for Chromium on Linux.
-Locally tested on CachyOS/Wayland with an RTX 4070 SUPER. A Brave port is planned.
+Experimental NVIDIA RTX Video Super Resolution integration for Chromium and Brave on Linux.
+Locally tested on CachyOS/Wayland with an RTX 4070 SUPER.
+See [Brave build and run instructions](docs/brave.md).
 
 **Experimental preview:** the tested working mode reports **GPU sandbox inactive**.
 Use it for isolated evaluation, not everyday browsing. Renderer sandbox status is

@@ -33,7 +33,7 @@ até um navegador utilizável, sem novas perguntas de rotina. O desenvolvimento
 local foi retomado em 2026-10-06 após o ambiente da nuvem ficar sem memória.
 **Chromium com VSR já foi validado em playback HTML5 real no host original.**
 O executável e o SDK ficam fora deste repositório; consulte as instruções de
-uso local abaixo. Brave ainda não foi portado.
+uso local abaixo. Brave foi portado e validado localmente em 07/10; consulte docs/brave.md e docs/development-progress.md.
 
 ### Atualização histórica: continuidade visual
 

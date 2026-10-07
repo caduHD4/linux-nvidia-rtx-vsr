@@ -175,6 +175,11 @@ def validate_playback(samples, mse):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--baseline', action='store_true')
+    parser.add_argument('--browser', choices=['chromium', 'brave'], default='chromium')
+    parser.add_argument('--media-root', type=Path, help='Directory containing generated media fixtures')
+    parser.add_argument('--launcher', type=Path, help='Override launcher, e.g. installed preview command')
+    parser.add_argument('--verify-fullscreen-exit', action='store_true',
+                        help='Observe continued decoding and no enhanced-selection log events after leaving fullscreen')
     parser.add_argument('--require-continuous-vsr', action='store_true',
                         help='Require zero original frames in complete 120-frame windows after each generation warmup')
     parser.add_argument('--require-vsr', action='store_true',
@@ -200,16 +205,19 @@ def main():
     if not 2 <= args.seconds <= 300:
         parser.error('--seconds must be between 2 and 300')
     project = Path(__file__).resolve().parents[2]
-    build = Path(os.environ.get('NVVFX_BROWSER_BUILD_ROOT', project/'build/browser'))
-    media = build/'media'
+    build_key = 'NVVFX_BRAVE_BUILD_ROOT' if args.browser == 'brave' else 'NVVFX_BROWSER_BUILD_ROOT'
+    build = Path(os.environ.get(build_key, project/('build/brave' if args.browser == 'brave' else 'build/browser')))
+    media = args.media_root or build/'media'
     if args.mse:
         args.clip = 'mse'
     required = ['mse-720p-30.mp4', 'mse-1080p-30.mp4'] if args.mse else [args.clip]
     if Path(args.clip).name != args.clip or not all((media/name).is_file() for name in required):
         parser.error('generate fixtures first; --clip must name a file in media/')
-    browser = build/'src/out/Vsr/chrome'
-    if not browser.is_file():
-        parser.error('compile Chromium first')
+    browser = build/('src/out/BraveVsr/brave' if args.browser == 'brave' else 'src/out/Vsr/chrome')
+    if not args.launcher and not browser.is_file():
+        parser.error('compile the selected browser first')
+    if args.verify_fullscreen_exit and not (args.fullscreen or args.require_vsr):
+        parser.error('--verify-fullscreen-exit requires fullscreen playback')
     mode = 'baseline' if args.baseline else 'vsr'
     results = build/'validation'/f'{mode}-{time.time_ns()}'
     results.mkdir(parents=True)
@@ -219,11 +227,12 @@ def main():
     browser_read, control_write = os.pipe()
     control_read, browser_write = os.pipe()
     process = None
-    report = {'mode': mode, 'clip': args.clip, 'samples': []}
+    report = {'mode': mode, 'browser': args.browser, 'clip': args.clip, 'samples': []}
     try:
         with tempfile.TemporaryDirectory(prefix='vsr-profile-', dir=build) as profile, \
              (results/'browser.log').open('wb') as log:
-            launcher = project/'tools/chromium'/f'run-{mode}.sh'
+            launcher = args.launcher or (project/'tools/brave/run-vsr.sh' if args.browser == 'brave'
+                                         else project/'tools/chromium'/f'run-{mode}.sh')
             # Chromium reads fd 3 and writes fd 4. Bash sets those descriptors
             # before exec, avoiding preexec_fn in a process with server threads.
             command = ['/bin/bash', '-c',
@@ -232,11 +241,13 @@ def main():
                        str(launcher), f'--user-data-dir={profile}',
                        '--remote-debugging-pipe', '--autoplay-policy=no-user-gesture-required',
                        '--disable-background-networking', 'about:blank']
+            launch_env = dict(os.environ, NVVFX_VSR_ENABLED='0' if args.baseline else '1')
             process = subprocess.Popen(command, pass_fds=(browser_read, browser_write),
-                                       stdout=log, stderr=log)
+                                       stdout=log, stderr=log, env=launch_env)
             os.close(browser_read); os.close(browser_write)
             browser_read = browser_write = None
             cdp = DevTools(control_read, control_write)
+            report['browser_version'] = cdp.call('Browser.getVersion')
             report['gpu'] = cdp.call('SystemInfo.getInfo')
             url = f'http://127.0.0.1:{server.server_port}/index.html'
             target = cdp.call('Target.createTarget', {'url': 'about:blank'})['targetId']
@@ -295,6 +306,27 @@ def main():
                     'format': 'png', 'clip': {**clip, 'scale': 1},
                     'fromSurface': True, 'captureBeyondViewport': True}, session)
                 (results/'frame.png').write_bytes(base64.b64decode(image['data'], validate=True))
+            if args.verify_fullscreen_exit:
+                exited = cdp.call('Runtime.evaluate', {'expression':
+                    '(async()=>{await document.exitFullscreen();return !document.fullscreenElement;})()',
+                    'awaitPromise':True, 'returnByValue':True}, session)
+                if not exited.get('result', {}).get('value'):
+                    raise RuntimeError('Could not exit fullscreen')
+                time.sleep(2)  # Drain already admitted work before measuring bypass.
+                cdp.call('Runtime.evaluate', {'expression':'0'}, session)
+                before = extract_enhanced_selections(cdp.events)
+                playback_before = cdp.call('Runtime.evaluate', {'expression':
+                    "document.querySelector('#video').getVideoPlaybackQuality().totalVideoFrames",
+                    'returnByValue':True}, session)['result']['value']
+                time.sleep(6)
+                status = cdp.call('Runtime.evaluate', {'expression':
+                    "({fullscreen:!!document.fullscreenElement,decoded:document.querySelector('#video').getVideoPlaybackQuality().totalVideoFrames})",
+                    'returnByValue':True}, session)['result']['value']
+                after = extract_enhanced_selections(cdp.events)
+                report['fullscreen_exit'] = dict(status, decoded_advance=status['decoded']-playback_before,
+                                                 enhanced_events_advance=len(after)-len(before))
+                if status['fullscreen'] or status['decoded']-playback_before < 120 or len(after) != len(before):
+                    raise RuntimeError('Fullscreen-exit bypass failed; inspect report')
             cdp.call('Browser.close', timeout=10)
             process.wait(timeout=15)
         report['browser_exit_code'] = process.returncode

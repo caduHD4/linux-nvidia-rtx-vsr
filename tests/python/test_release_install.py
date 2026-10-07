@@ -39,6 +39,42 @@ class ReleaseInstallTest(unittest.TestCase):
                 lines.append(hashlib.sha256(p.read_bytes()).hexdigest()+'  '+p.relative_to(self.source).as_posix())
         (self.source/'SHA256SUMS').write_text('\n'.join(lines)+'\n')
 
+    def set_browser(self, browser):
+        executable = 'brave' if browser == 'brave' else 'chrome'
+        for name in ('chrome', 'brave'):
+            (self.source/'browser'/name).unlink(missing_ok=True)
+        (self.source/'browser'/executable).write_text('placeholder')
+        (self.source/'BUILD-INFO.json').write_text(json.dumps({'version': 'fixture', 'browser': browser}))
+        lines = [hashlib.sha256(p.read_bytes()).hexdigest()+'  '+p.relative_to(self.source).as_posix()
+                 for p in sorted(self.source.rglob('*')) if p.is_file() and p.name != 'SHA256SUMS']
+        (self.source/'SHA256SUMS').write_text('\n'.join(lines)+'\n')
+
+    def test_brave_coexists_with_chromium_and_uninstalls_independently(self):
+        self.assertEqual(self.run_installer('--sdk', str(self.sdk)).returncode, 0)
+        self.set_browser('brave')
+        result = self.run_installer('--sdk', str(self.sdk))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        data = Path(self.env['XDG_DATA_HOME'])
+        for app in ('linux-nvidia-vsr', 'linux-nvidia-brave-vsr'):
+            executable = 'brave' if app == 'linux-nvidia-brave-vsr' else 'chrome'
+            self.assertTrue((data/app/'browser'/executable).is_file())
+            self.assertTrue((Path(self.env['HOME'])/'.local/bin'/app).is_file())
+            self.assertTrue((data/'applications'/(app+'.desktop')).is_file())
+        self.assertIn('Name=Brave RTX VSR', (data/'applications/linux-nvidia-brave-vsr.desktop').read_text())
+        result = self.run_installer('--uninstall')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((data/'linux-nvidia-vsr/browser/chrome').is_file())
+        self.assertFalse((data/'linux-nvidia-brave-vsr').exists())
+
+    def test_invalid_browser_identity_does_not_write_anything(self):
+        for browser in ('../../escape', 'firefox', ['brave']):
+            with self.subTest(browser=browser):
+                self.set_browser(browser)
+                result = self.run_installer('--sdk', str(self.sdk))
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('Unsupported release browser identity', result.stderr)
+                self.assertFalse(Path(self.env['XDG_DATA_HOME']).exists())
+
     def run_installer(self, *args):
         return subprocess.run([sys.executable, str(self.source/'install.py'), *args],
                               env=self.env, text=True, capture_output=True)

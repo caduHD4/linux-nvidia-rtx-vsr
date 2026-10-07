@@ -5,7 +5,7 @@ plan linked there. This repo contains a Chromium Linux NVIDIA VSR integration wi
 browser playback. Public binary validation is incomplete: sandbox-enabled
 inference remains blocked. The user subsequently authorized an experimental
 public binary with that limitation disclosed; do not describe the sandbox gate
-as passed. Brave has not been ported.
+as passed. Brave has been ported and locally playback-tested; read docs/brave.md for its separate pins and tooling.
 
 Keep Chromium pinned to b510e9d7cd3a2fbd78d0ddc42234103206c5f78d until a deliberate
 port is needed. Restore the probe patch before optional WIP overlay, and stage
