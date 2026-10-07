@@ -4,7 +4,9 @@
 > reporta sandbox ativo e todos os threads GPU observados têm `Seccomp: 2`;
 > porém a descoberta NGX falha com `-14`: o SDK consulta `lib/../features`,
 > rejeitado pelo broker. Isso **não** valida inferência sob sandbox.
-> Não publicar binário até playback aprimorado real passar com sandbox ativo.
+> Atualização: usuário autorizou explicitamente publicar a prévia mesmo com essa
+> limitação. Usar o caminho local funcional, informar GPU sandbox inativo e não
+> alegar que o gate de isolamento passou. Ver docs/distribution.md.
 > Verificado nesta rodada: CTest 12/12, Python 27/27 (instalador 9/9) e 10 casos
 > de restrição do escalonador no filtro seccomp real. Consulte também
 > [o plano de distribuição](superpowers/plans/2026-10-06-public-preview.md).

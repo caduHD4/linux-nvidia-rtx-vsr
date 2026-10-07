@@ -3,13 +3,27 @@
 Experimental NVIDIA RTX Video Super Resolution integration for Chromium on Linux.
 Locally tested on CachyOS/Wayland with an RTX 4070 SUPER. A Brave port is planned.
 
-**No installable browser release yet.** This repository contains source, patches,
-and build tools. The latest integration and preview installer are included; binary release validation is ongoing.
+**Experimental preview:** the tested working mode reports **GPU sandbox inactive**.
+Use it for isolated evaluation, not everyday browsing. Renderer sandbox status is
+separate. NVIDIA libraries and models are not included.
+
+## Install the preview
+
+Download the Linux archive and checksum from [Releases](https://github.com/caduHD4/linux-nvidia-rtx-vsr/releases).
+Install the NVIDIA SDK below, then extract the browser archive and run:
+
+```bash
+python3 install.py --sdk "$HOME/.local/opt/nvidia-vfx/VideoFX"
+```
+
+Open **Chromium RTX VSR (Experimental)** from your app menu. No browser build or
+root access is needed. See [installation details](docs/distribution.md).
 
 ## Requirements
 
 - Linux x86_64, an NVIDIA RTX GPU, and a working driver (`nvidia-smi`).
 - NVIDIA Video Effects SDK Core **1.3.0.0** and **nvvfxvideosuperres 1.3.0.0**.
+- Wayland, Python 3.11+, and `libva-nvidia-driver` for the preview.
 - For building: CMake 3.25+, a C++20 compiler, and Chromium build dependencies.
 
 ## Install the NVIDIA SDK
@@ -68,8 +82,9 @@ Protected and HDR content bypass processing. Other GPUs and distributions still
 need validation. Working local playback previously reported `sandboxed=false`.
 The current sandbox-enabled probe applies seccomp to every GPU thread, but NVIDIA
 NGX feature discovery fails (`-14`); the SDK uses parent-relative paths rejected
-by Chromium’s file broker. No browser
-binary will be released until real enhancement works with the GPU sandbox active.
+by Chromium’s file broker. This preview therefore uses the locally tested path;
+fully sandboxed enhancement is unfinished. No sandbox-disabling flags or ANGLE
+check removals are included.
 
 NVIDIA libraries and models are downloaded separately. Redistribution depends on
 [NVIDIA's license terms](https://www.nvidia.com/en-us/agreements/enterprise-software/product-specific-terms-for-ai-products/)

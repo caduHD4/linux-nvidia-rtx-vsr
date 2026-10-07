@@ -1,13 +1,14 @@
-# Linux preview packaging
+# Linux experimental preview
 
-No browser binary Release is available yet. The current sandbox-enabled probe
-reaches NVIDIA NGX initialization, but feature discovery fails (`-14`): the
-SDK probes parent-relative paths rejected by Chromium’s file broker. Publish binaries only after actual enhancement passes
-with the GPU sandbox active on every thread.
+The user explicitly authorized publishing the working local preview despite the
+known GPU sandbox limitation. The default mode reported **GPU sandbox inactive**
+on the tested host. This is for isolated evaluation, not everyday browsing.
+The early-sandbox diagnostic path reaches NGX but feature discovery fails (`-14`).
+This release does not claim secure GPU isolation or universal compatibility.
 
 Initial target: Linux x86_64, Arch/CachyOS, Wayland and NVIDIA RTX 40. Python 3.11+, working NVIDIA driver, libva-nvidia-driver, and NVIDIA VFX Core + nvvfxvideosuperres 1.3.0.0 are required. Other configurations are unverified. The NVIDIA SDK is not bundled.
 
-## End-user installation (when a binary Release is available)
+## End-user installation
 
 Download the archive and its published SHA256 file from this repository's Releases. Verify the downloaded archive with `sha256sum -c <archive>.sha256`, then extract it. Install the SDK using the README, then run from the extracted package:
 
@@ -36,14 +37,17 @@ When publishing a snapshot from a different local Git history, use
 
 Output must remain outside the source repository. It contains browser executables, component libraries/resources, project/Chromium license notices, generated credits, scripts and SHA256SUMS. It excludes NVIDIA SDK, profiles and generated test videos. Compress the resulting directory and generate a SHA256 for the archive. Each GitHub release asset must remain below 2 GiB.
 
-## Release gates
+## Release status
 
-Do not upload a browser binary unless relocated-package playback and GPU sandbox validation pass. Confirm actual GPU thread Seccomp status in addition to SystemInfo. The installer and packaging tools can be published while this gate is blocked, but no installable-browser claim is allowed. A source Git push uses SSH; creating/uploading GitHub Release assets additionally needs authenticated GitHub API access.
+This explicitly authorized prerelease is an exception to the previous secure
+release gate. Relocated-package inference must work; GPU isolation is a known
+unresolved limitation, not a passed check. No NVIDIA libraries/models are bundled.
+GitHub Release uploads require authenticated GitHub API access in addition to Git SSH.
 
 ## Development sandbox investigation
 
 `NVVFX_VSR_SANDBOX_EXPERIMENT=1 tools/chromium/run-vsr.sh` opts into early
 sandbox initialization and TSYNC. This is a diagnostic path, not a usable release.
 The development launcher retains the previously tested local path by default;
-its GPU isolation remains unvalidated. The packaged launcher always requests
-an early sandbox and fatal sandbox initialization failures.
+its GPU isolation remains unvalidated. The packaged launcher also accepts this diagnostic option; when selected it
+requires early sandbox initialization and fatal initialization failures.

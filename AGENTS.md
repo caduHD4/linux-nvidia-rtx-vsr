@@ -3,7 +3,9 @@
 Read `docs/CLOUD_HANDOFF.md` first, then the approved design and implementation
 plan linked there. This repo contains a Chromium Linux NVIDIA VSR integration with tested local
 browser playback. Public binary validation is incomplete: sandbox-enabled
-inference remains blocked. Brave has not been ported.
+inference remains blocked. The user subsequently authorized an experimental
+public binary with that limitation disclosed; do not describe the sandbox gate
+as passed. Brave has not been ported.
 
 Keep Chromium pinned to b510e9d7cd3a2fbd78d0ddc42234103206c5f78d until a deliberate
 port is needed. Restore the probe patch before optional WIP overlay, and stage

@@ -47,12 +47,16 @@ def main():
         print('SDK files, NVIDIA driver, Wayland and browser dependencies found. Playback is not yet verified.')
         return
     profile = Path(os.environ.get('XDG_DATA_HOME', Path.home()/'.local/share'))/'linux-nvidia-vsr-profile'
-    flags = ['--gpu-sandbox-start-early', '--gpu-sandbox-failures-fatal=yes',
-             '--ozone-platform=wayland', '--use-gl=egl', '--use-cmd-decoder=validating',
+    flags = ['--ozone-platform=wayland', '--use-gl=egl', '--use-cmd-decoder=validating',
              '--disable-gl-extensions=GL_EXT_multisampled_render_to_texture,GL_IMG_multisampled_render_to_texture',
              '--enable-features=NvidiaVideoSuperResolution,NvidiaVsrNativeEgl,VaapiOnNvidiaGPUs,AcceleratedVideoDecodeLinuxGL',
              '--user-data-dir='+str(profile), '--no-first-run', '--no-default-browser-check',
              '--enable-logging=stderr']
+    if os.environ.get('NVVFX_VSR_SANDBOX_EXPERIMENT') == '1':
+        flags = ['--gpu-sandbox-start-early', '--gpu-sandbox-failures-fatal=yes', *flags]
+    else:
+        print('Experimental preview: GPU sandbox is not active in the tested working mode. '
+              'Not intended for everyday browsing. See README.md.', file=sys.stderr)
     os.execve(browser, [str(browser), *flags, *sys.argv[1:]], env)
 
 

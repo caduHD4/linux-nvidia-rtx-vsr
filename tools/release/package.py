@@ -81,6 +81,9 @@ def main():
         'project_revision': revision,
         'sdk_version': '1.3.0.0', 'platform': 'Linux x86_64 Wayland',
         'nvidia_sdk_included': False,
+        'release_channel': 'experimental',
+        'gpu_sandbox_validated': False,
+        'default_launcher_mode': 'experimental-local',
         'project_dirty': bool(subprocess.check_output(
             ['git', '-C', str(project), 'status', '--porcelain'], text=True).strip())}
     (stage/'BUILD-INFO.json').write_text(json.dumps(info, indent=2)+'\n')

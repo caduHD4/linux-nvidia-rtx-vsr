@@ -46,3 +46,13 @@ clean-source BUILD-INFO referencing public9724b70, no NVIDIA binaries or symlink
 SHA256SUMS verified; actual package installed/uninstalled in temporary XDG paths
 with spaces and launch.py --check passed. No secured playback claim follows from
 that prerequisite check. Relocated-package playback remains an open release gate.
+
+
+## Explicit publication override
+
+After disclosure of the blocker, user instructed “publique de qualquer forma!!!”.
+Publish an experimental browser using the verified local path with the GPU
+sandbox limitation prominently disclosed. Early sandbox remains diagnostic opt-in;
+no sandbox-disable flags or removed checks. Validate installed/relocated package,
+archive SHA256, licensing and exclusion of NVIDIA assets, then publish prerelease.
+GitHub API authentication is required for asset upload; Git SSH alone is not enough.
