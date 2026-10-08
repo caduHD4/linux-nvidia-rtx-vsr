@@ -94,7 +94,8 @@ def main():
         status = apply_complete_patch(source, ROOT / 'brave/patches/nvidia-vsr.patch',
                                       [ROOT / 'brave/patches/quality-settings-upgrade.patch',
                                        ROOT / 'brave/patches/image-controls-upgrade.patch',
-                                       ROOT / 'brave/patches/high-resolution-denoise-upgrade.patch'])
+                                       ROOT / 'brave/patches/high-resolution-denoise-upgrade.patch',
+                                       ROOT / 'brave/patches/low-denoise-upgrade.patch'])
     except RuntimeError as error:
         parser.exit(1, str(error) + '\n')
     print(f'Brave NVIDIA VSR delta {status}. Build and playback validation are still required.')

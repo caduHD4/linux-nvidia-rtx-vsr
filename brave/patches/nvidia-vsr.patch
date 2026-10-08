@@ -9,7 +9,7 @@ diff --git a/brave/browser/brave_content_browser_client.cc b/brave/browser/brave
  #include "base/system/sys_info.h"
  #include "brave/browser/bluetooth/brave_bluetooth_delegate.h"
  #include "brave/browser/brave_account/brave_account_navigation_throttle.h"
-@@ -1122,6 +1123,50 @@
+@@ -1122,6 +1123,46 @@
    ChromeContentBrowserClient::AppendExtraCommandLineSwitches(command_line,
                                                               child_process_id);
  
@@ -47,12 +47,8 @@ diff --git a/brave/browser/brave_content_browser_client.cc b/brave/browser/brave
 +    int value = prefs->GetInteger("brave.nvidia_vsr_sharpness");
 +    return value >= 0 && value <= 100 ? value : -2;
 +  }();
-+  static const int vsr_denoise = [] {
-+    int value = g_browser_process->local_state()->GetInteger("brave.nvidia_vsr_denoise");
-+    return value >= 8 && value <= 11 ? value : -2;
-+  }();
 +  command_line->AppendSwitchASCII("nvidia-vsr-sharpness", base::NumberToString(vsr_sharpness));
-+  command_line->AppendSwitchASCII("nvidia-vsr-denoise", base::NumberToString(vsr_denoise));
++  command_line->AppendSwitchASCII("nvidia-vsr-denoise", "11");
 +
 +  }
 +#endif
@@ -63,14 +59,13 @@ diff --git a/brave/browser/brave_content_browser_client.cc b/brave/browser/brave
 diff --git a/brave/browser/brave_local_state_prefs.cc b/brave/browser/brave_local_state_prefs.cc
 --- a/brave/browser/brave_local_state_prefs.cc
 +++ b/brave/browser/brave_local_state_prefs.cc
-@@ -170,6 +170,11 @@
+@@ -170,6 +170,10 @@
  }
  
  void RegisterLocalStatePrefs(PrefRegistrySimple* registry) {
 +#if BUILDFLAG(IS_LINUX)
 +  registry->RegisterIntegerPref("brave.nvidia_vsr_target_height", 2160);
 +  registry->RegisterIntegerPref("brave.nvidia_vsr_sharpness", 35);
-+  registry->RegisterIntegerPref("brave.nvidia_vsr_denoise", 11);
 +#endif
    brave_shields::RegisterPrefsForAdBlockService(registry);
    // `kStatsReportingEnabled` is the user/policy-facing opt-in for anonymous
@@ -78,14 +73,13 @@ diff --git a/brave/browser/brave_local_state_prefs.cc b/brave/browser/brave_loca
 diff --git a/brave/browser/extensions/api/settings_private/brave_prefs_util.cc b/brave/browser/extensions/api/settings_private/brave_prefs_util.cc
 --- a/brave/browser/extensions/api/settings_private/brave_prefs_util.cc
 +++ b/brave/browser/extensions/api/settings_private/brave_prefs_util.cc
-@@ -118,6 +118,11 @@
+@@ -118,6 +118,10 @@
    // Start with parent class allowlist
    const auto chromium_prefs = PrefsUtil::GetAllowlistedKeys();
    s_brave_allowlist->insert(chromium_prefs.begin(), chromium_prefs.end());
 +#if BUILDFLAG(IS_LINUX)
 +  (*s_brave_allowlist)["brave.nvidia_vsr_target_height"] = settings_api::PrefType::kNumber;
 +  (*s_brave_allowlist)["brave.nvidia_vsr_sharpness"] = settings_api::PrefType::kNumber;
-+  (*s_brave_allowlist)["brave.nvidia_vsr_denoise"] = settings_api::PrefType::kNumber;
 +#endif
    // Add Brave values to the allowlist
    // import data
@@ -93,7 +87,7 @@ diff --git a/brave/browser/extensions/api/settings_private/brave_prefs_util.cc b
 diff --git a/brave/chromium_src/chrome/browser/resources/settings/system_page/system_page.html.ts.lit_mangler.ts b/brave/chromium_src/chrome/browser/resources/settings/system_page/system_page.html.ts.lit_mangler.ts
 --- a/brave/chromium_src/chrome/browser/resources/settings/system_page/system_page.html.ts.lit_mangler.ts
 +++ b/brave/chromium_src/chrome/browser/resources/settings/system_page/system_page.html.ts.lit_mangler.ts
-@@ -33,6 +33,47 @@
+@@ -33,6 +33,39 @@
          @click="\${this.onShortcutsClick_}">
       </cr-link-row>`)
  
@@ -125,15 +119,7 @@ diff --git a/brave/chromium_src/chrome/browser/resources/settings/system_page/sy
 +       <span>\${this.vsrSharpness_}%</span>
 +     </div>
 +     <div class="settings-box" ?hidden="\${!this.vsrIsLinux_}">
-+       <div class="start"><label for="nvidiaVsrDenoise">Native-resolution denoise</label>
-+         <div class="secondary">Applies when video is not upscaled. Upscaling uses VSR Ultra.</div></div>
-+       <select id="nvidiaVsrDenoise" aria-label="Native-resolution denoise level"
-+           ?disabled="\${!this.vsrLoaded_ || this.vsrSaving_}" @change="\${this.onVsrDenoiseChange_}">
-+         <option value="8" ?selected="\${this.vsrDenoise_ === 8}">Low</option>
-+         <option value="9" ?selected="\${this.vsrDenoise_ === 9}">Medium</option>
-+         <option value="10" ?selected="\${this.vsrDenoise_ === 10}">High</option>
-+         <option value="11" ?selected="\${this.vsrDenoise_ === 11}">Ultra</option>
-+       </select>
++       <div class="start"><div class="secondary">Videos above 1080p use Low denoise at their original resolution.</div></div>
 +       <cr-button id="nvidiaVsrReset" ?disabled="\${!this.vsrLoaded_ || this.vsrSaving_}"
 +           @click="\${this.onVsrResetClick_}">Restore defaults</cr-button>
 +     </div>`)
@@ -153,17 +139,15 @@ diff --git a/brave/chromium_src/chrome/browser/resources/settings/system_page/sy
  
  import { loadTimeData } from '../i18n_setup.js'
  import { routes } from '../route.js'
-@@ -18,6 +18,19 @@
+@@ -18,6 +18,17 @@
  // via the upstream system_page.html.ts import) type-checks.
  declare module './system_page-chromium.js' {
    interface SettingsSystemPageElement {
 +    loadVsrSettings_(): Promise<void>
 +    saveVsrSettings_(values: Array<[string, number]>): Promise<void>
 +    vsrSharpness_: number
-+    vsrDenoise_: number
 +    vsrSaving_: boolean
 +    onVsrSharpnessChange_(event: Event): Promise<void>
-+    onVsrDenoiseChange_(event: Event): Promise<void>
 +    onVsrResetClick_(): Promise<void>
 +    vsrTargetHeight_: number
 +    vsrLoaded_: boolean
@@ -173,12 +157,11 @@ diff --git a/brave/chromium_src/chrome/browser/resources/settings/system_page/sy
      shortcutsSupported_: boolean
      isMac_: boolean
      warnBeforeQuittingLabel_: string
-@@ -29,10 +42,94 @@
+@@ -29,10 +40,82 @@
    static override get properties() {
      return {
        ...super.properties,
 +      vsrSharpness_: { type: Number },
-+      vsrDenoise_: { type: Number },
 +      vsrSaving_: { type: Boolean },
 +      vsrTargetHeight_: { type: Number },
 +      vsrLoaded_: { type: Boolean },
@@ -191,7 +174,6 @@ diff --git a/brave/chromium_src/chrome/browser/resources/settings/system_page/sy
 +  }
 +
 +  override accessor vsrSharpness_: number = 35
-+  override accessor vsrDenoise_: number = 11
 +  override accessor vsrSaving_: boolean = false
 +  override accessor vsrTargetHeight_: number = 2160
 +  override accessor vsrLoaded_: boolean = false
@@ -208,14 +190,12 @@ diff --git a/brave/chromium_src/chrome/browser/resources/settings/system_page/sy
 +  }
 +
 +  override async loadVsrSettings_() {
-+    const [target, sharpness, denoise] = await Promise.all([
++    const [target, sharpness] = await Promise.all([
 +      chrome.settingsPrivate.getPref('brave.nvidia_vsr_target_height'),
 +      chrome.settingsPrivate.getPref('brave.nvidia_vsr_sharpness'),
-+      chrome.settingsPrivate.getPref('brave.nvidia_vsr_denoise'),
 +    ])
 +    this.vsrTargetHeight_ = Number(target.value)
 +    this.vsrSharpness_ = Number(sharpness.value)
-+    this.vsrDenoise_ = Number(denoise.value)
 +    this.vsrLoaded_ = true
 +  }
 +
@@ -252,24 +232,15 @@ diff --git a/brave/chromium_src/chrome/browser/resources/settings/system_page/sy
 +    }
 +  }
 +
-+  override async onVsrDenoiseChange_(event: Event) {
-+    const value = Number((event.target as HTMLSelectElement).value)
-+    if ([8, 9, 10, 11].includes(value)) {
-+      await this.saveVsrSettings_([['brave.nvidia_vsr_denoise', value]])
-+    }
-+  }
-+
 +  override async onVsrResetClick_() {
 +    await this.saveVsrSettings_([
 +      ['brave.nvidia_vsr_target_height', 2160],
 +      ['brave.nvidia_vsr_sharpness', 35],
-+      ['brave.nvidia_vsr_denoise', 11],
 +    ])
    }
  
    override accessor shortcutsSupported_: boolean =
 diff --git a/content/common/BUILD.gn b/content/common/BUILD.gn
-index 7af4d8bb34..b28bb0f31f 100644
 --- a/content/common/BUILD.gn
 +++ b/content/common/BUILD.gn
 @@ -4,6 +4,7 @@
@@ -280,7 +251,7 @@ index 7af4d8bb34..b28bb0f31f 100644
  import("//content/public/common/zygote/features.gni")
  import("//ipc/features.gni")
  import("//media/media_options.gni")
-@@ -219,6 +220,7 @@ source_set("common") {
+@@ -220,6 +221,7 @@
    ]
    deps = [
      ":buildflags",
@@ -288,7 +259,7 @@ index 7af4d8bb34..b28bb0f31f 100644
      "//base",
      "//base/allocator:buildflags",
      "//build:branding_buildflags",
-@@ -283,6 +285,10 @@ source_set("common") {
+@@ -284,6 +286,10 @@
      "//url",
      "//url/ipc:url_ipc",
    ]
@@ -300,7 +271,6 @@ index 7af4d8bb34..b28bb0f31f 100644
    defines = []
    include_dirs = []
 diff --git a/content/common/gpu_pre_sandbox_hook_linux.cc b/content/common/gpu_pre_sandbox_hook_linux.cc
-index 2e53794fa3..f0b5f9c583 100644
 --- a/content/common/gpu_pre_sandbox_hook_linux.cc
 +++ b/content/common/gpu_pre_sandbox_hook_linux.cc
 @@ -16,6 +16,12 @@
@@ -316,7 +286,7 @@ index 2e53794fa3..f0b5f9c583 100644
  #include "base/files/file_enumerator.h"
  #include "base/files/file_path.h"
  #include "base/files/scoped_file.h"
-@@ -573,6 +579,17 @@ bool LoadNvidiaLibraries() {
+@@ -573,6 +579,17 @@
        "libxcb-glx.so.0",
        "libxcb-present.so.0",
        "libxcb-sync.so.1",
@@ -334,7 +304,7 @@ index 2e53794fa3..f0b5f9c583 100644
    };
    for (const auto* library : kLibraries) {
      if (!dlopen(library, dlopen_flag))
-@@ -616,6 +633,10 @@ sandbox::syscall_broker::BrokerCommandSet CommandSetForGPU(
+@@ -616,6 +633,10 @@
         options.use_virtio_specific_policies || IsArchitectureArm())) {
      command_set.set(sandbox::syscall_broker::COMMAND_READLINK);
    }
@@ -345,7 +315,7 @@ index 2e53794fa3..f0b5f9c583 100644
    return command_set;
  }
  
-@@ -669,6 +690,40 @@ std::vector<BrokerFilePermission> FilePermissionsForGpu(
+@@ -669,6 +690,40 @@
    }
  
    AddStandardGpuPermissions(&permissions);
@@ -386,7 +356,7 @@ index 2e53794fa3..f0b5f9c583 100644
    return permissions;
  }
  
-@@ -695,12 +750,33 @@ bool LoadLibrariesForGpu(
+@@ -695,12 +750,33 @@
    return true;
  }
  
@@ -422,10 +392,9 @@ index 2e53794fa3..f0b5f9c583 100644
    // TODO(tsepez): enable namspace sandbox here once crashes are understood.
  
 diff --git a/content/common/gpu_pre_sandbox_hook_linux.h b/content/common/gpu_pre_sandbox_hook_linux.h
-index 764a5502ba..6780e1125d 100644
 --- a/content/common/gpu_pre_sandbox_hook_linux.h
 +++ b/content/common/gpu_pre_sandbox_hook_linux.h
-@@ -17,6 +17,9 @@ namespace content {
+@@ -17,6 +17,9 @@
  
  // A pre-sandbox hook to use on Linux-based systems in sandboxed processes that
  // require general GPU usage.
@@ -436,10 +405,9 @@ index 764a5502ba..6780e1125d 100644
  
  // These functions can be used by other pre-sandbox hooks that need GPU access
 diff --git a/content/gpu/gpu_main.cc b/content/gpu/gpu_main.cc
-index 4dafd53f61..87cf30ea0a 100644
 --- a/content/gpu/gpu_main.cc
 +++ b/content/gpu/gpu_main.cc
-@@ -147,6 +147,46 @@ bool StartSandboxAndroid(gpu::GpuWatchdogThread*);
+@@ -147,6 +147,46 @@
  bool StartSandboxWindows(const sandbox::SandboxInterfaceInfo*);
  #endif
  
@@ -486,10 +454,11 @@ index 4dafd53f61..87cf30ea0a 100644
  class ContentSandboxHelper : public gpu::GpuSandboxHelper {
   public:
    ContentSandboxHelper() {}
-@@ -180,6 +220,22 @@ class ContentSandboxHelper : public gpu::GpuSandboxHelper {
+@@ -179,6 +219,22 @@
+       std::ignore = base::RandUint64();
  #endif  // BUILDFLAG(IS_WIN)
      }
- 
++
 +#if BUILDFLAG(IS_LINUX)
 +    // The NVIDIA VA-API driver initializes CUDA and starts a helper thread.
 +    // Fork the unchanged syscall broker while we are still single-threaded.
@@ -505,11 +474,10 @@ index 4dafd53f61..87cf30ea0a 100644
 +      // StartSandboxLinux restarts tracing after seccomp is installed.
 +    }
 +#endif
-+
+ 
  #if BUILDFLAG(USE_VAAPI)
  #if BUILDFLAG(IS_CHROMEOS)
-     media::VaapiWrapper::PreSandboxInitialization(
-@@ -518,37 +574,13 @@ bool StartSandboxLinux(gpu::GpuWatchdogThread* watchdog_thread,
+@@ -518,37 +574,13 @@
        tracing::IsTracingInitialized()
            ? tracing::PerfettoTracedProcess::GetTraceThread()
            : nullptr;
@@ -550,10 +518,9 @@ index 4dafd53f61..87cf30ea0a 100644
  #if BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_LINUX)
    // Video decoding of many video streams can use thousands of FDs as well as
 diff --git a/gpu/BUILD.gn b/gpu/BUILD.gn
-index 633229ece0..624e22bd05 100644
 --- a/gpu/BUILD.gn
 +++ b/gpu/BUILD.gn
-@@ -7,6 +7,7 @@ import("//build/config/ui.gni")
+@@ -7,6 +7,7 @@
  import("//gpu/vulkan/features.gni")
  import("//mojo/public/tools/fuzzers/mojolpm.gni")
  import("//skia/features.gni")
@@ -561,23 +528,22 @@ index 633229ece0..624e22bd05 100644
  import("//testing/libfuzzer/fuzzer_test.gni")
  import("//testing/test.gni")
  import("//third_party/angle/gni/angle.gni")
-@@ -292,6 +293,14 @@ test("gl_tests") {
-     ]
-   }
- 
+@@ -289,6 +290,14 @@
+       "command_buffer/tests/webgpu_mailbox_unittest.cc",
+       "command_buffer/tests/webgpu_test.cc",
+       "command_buffer/tests/webgpu_test.h",
++    ]
++  }
++
 +  if (enable_nvidia_vsr) {
 +    sources += [
 +      "ipc/service/nvidia_vsr_native_integration_unittest.cc",
 +      "ipc/service/gpu_channel_test_common.cc",
 +      "ipc/service/gpu_channel_test_common.h",
-+    ]
-+  }
-+
-   defines = [ "GL_GLEXT_PROTOTYPES" ]
+     ]
+   }
  
-   deps = [
 diff --git a/gpu/command_buffer/client/shared_image_interface.cc b/gpu/command_buffer/client/shared_image_interface.cc
-index 7ba141d45e..527a25ebce 100644
 --- a/gpu/command_buffer/client/shared_image_interface.cc
 +++ b/gpu/command_buffer/client/shared_image_interface.cc
 @@ -20,6 +20,10 @@
@@ -592,10 +558,9 @@ index 7ba141d45e..527a25ebce 100644
  // static
  void SharedImageInterface::CreateSharedMemoryRegionFromSIInfo(
 diff --git a/gpu/command_buffer/client/shared_image_interface.h b/gpu/command_buffer/client/shared_image_interface.h
-index 119f10c56d..e0364d706b 100644
 --- a/gpu/command_buffer/client/shared_image_interface.h
 +++ b/gpu/command_buffer/client/shared_image_interface.h
-@@ -54,6 +54,7 @@ class MockSharedImageInterface;
+@@ -54,6 +54,7 @@
  namespace gpu {
  class ArcSharedImageInterface;
  class ClientSharedImageInterface;
@@ -603,7 +568,7 @@ index 119f10c56d..e0364d706b 100644
  struct ExportedSharedImage;
  class GpuChannelLostObserver;
  struct SharedImageCapabilities;
-@@ -69,6 +70,9 @@ class TestSharedImageInterface;
+@@ -69,6 +70,9 @@
  class GPU_COMMAND_BUFFER_CLIENT_EXPORT SharedImageInterface
      : public base::RefCountedThreadSafe<SharedImageInterface> {
   public:
@@ -614,10 +579,9 @@ index 119f10c56d..e0364d706b 100644
    // |usage| is a combination of |SharedImageUsage| bits that describes which
    // API(s) the image will be used with.
 diff --git a/gpu/command_buffer/service/shared_image/compound_image_backing.cc b/gpu/command_buffer/service/shared_image/compound_image_backing.cc
-index 0b316c70cc..3b4337c874 100644
 --- a/gpu/command_buffer/service/shared_image/compound_image_backing.cc
 +++ b/gpu/command_buffer/service/shared_image/compound_image_backing.cc
-@@ -150,8 +150,10 @@ class WrappedGLTextureCompoundImageRepresentation
+@@ -150,8 +150,10 @@
        SharedImageBacking* backing,
        MemoryTypeTracker* tracker,
        std::unique_ptr<GLTextureImageRepresentation> wrapped,
@@ -629,7 +593,7 @@ index 0b316c70cc..3b4337c874 100644
          owned_backing_(std::move(owned_backing)),
          wrapped_(std::move(wrapped)) {
      DCHECK(wrapped_);
-@@ -166,7 +168,8 @@ class WrappedGLTextureCompoundImageRepresentation
+@@ -166,7 +168,8 @@
      AccessMode access_mode =
          mode == kReadAccessMode ? AccessMode::kRead : AccessMode::kWrite;
      if (!compound_backing()->NotifyBeginAccess(wrapped_->backing(), access_mode,
@@ -639,7 +603,7 @@ index 0b316c70cc..3b4337c874 100644
        return false;
      }
      access_mode_ = access_mode;
-@@ -203,6 +206,7 @@ class WrappedGLTextureCompoundImageRepresentation
+@@ -203,6 +206,7 @@
    }
  
   private:
@@ -647,7 +611,7 @@ index 0b316c70cc..3b4337c874 100644
    std::unique_ptr<SharedImageBacking> owned_backing_;
    std::unique_ptr<GLTextureImageRepresentation> wrapped_;
    AccessMode access_mode_ = AccessMode::kNone;
-@@ -283,8 +287,10 @@ class WrappedSkiaGaneshCompoundImageRepresentation
+@@ -283,8 +287,10 @@
        SharedImageBacking* backing,
        MemoryTypeTracker* tracker,
        std::unique_ptr<SkiaGaneshImageRepresentation> wrapped,
@@ -659,7 +623,7 @@ index 0b316c70cc..3b4337c874 100644
          owned_backing_(std::move(owned_backing)),
          wrapped_(std::move(wrapped)) {
      DCHECK(wrapped_);
-@@ -308,7 +314,7 @@ class WrappedSkiaGaneshCompoundImageRepresentation
+@@ -308,7 +314,7 @@
        std::unique_ptr<skgpu::MutableTextureState>* end_state) final {
      if (!compound_backing()->NotifyBeginAccess(
              wrapped_->backing(), AccessMode::kWrite,
@@ -668,7 +632,7 @@ index 0b316c70cc..3b4337c874 100644
        return {};
      }
      return wrapped_->BeginWriteAccess(final_msaa_count, surface_props,
-@@ -321,7 +327,7 @@ class WrappedSkiaGaneshCompoundImageRepresentation
+@@ -321,7 +327,7 @@
        std::unique_ptr<skgpu::MutableTextureState>* end_state) final {
      if (!compound_backing()->NotifyBeginAccess(
              wrapped_->backing(), AccessMode::kWrite,
@@ -677,7 +641,7 @@ index 0b316c70cc..3b4337c874 100644
        return {};
      }
      return wrapped_->BeginWriteAccess(begin_semaphores, end_semaphores,
-@@ -339,7 +345,7 @@ class WrappedSkiaGaneshCompoundImageRepresentation
+@@ -339,7 +345,7 @@
        std::unique_ptr<skgpu::MutableTextureState>* end_state) final {
      if (!compound_backing()->NotifyBeginAccess(
              wrapped_->backing(), AccessMode::kRead,
@@ -686,7 +650,7 @@ index 0b316c70cc..3b4337c874 100644
        return {};
      }
      return wrapped_->BeginReadAccess(begin_semaphores, end_semaphores,
-@@ -363,6 +369,7 @@ class WrappedSkiaGaneshCompoundImageRepresentation
+@@ -363,6 +369,7 @@
    }
  
   private:
@@ -694,7 +658,7 @@ index 0b316c70cc..3b4337c874 100644
    std::unique_ptr<SharedImageBacking> owned_backing_;
    std::unique_ptr<SkiaGaneshImageRepresentation> wrapped_;
  };
-@@ -1237,6 +1244,70 @@ CompoundImageBacking::CompoundImageBacking(
+@@ -1237,6 +1244,70 @@
    max_elements_allocated_ = 1;
  }
  
@@ -765,7 +729,7 @@ index 0b316c70cc..3b4337c874 100644
  CompoundImageBacking::~CompoundImageBacking() {
    UMA_HISTOGRAM_COUNTS_100("GPU.CompoundImageBacking.TotalElementsAllocated",
                             max_elements_allocated_);
-@@ -1247,7 +1318,8 @@ CompoundImageBacking::~CompoundImageBacking() {
+@@ -1247,7 +1318,8 @@
  
  bool CompoundImageBacking::NotifyBeginAccess(SharedImageBacking* backing,
                                               RepresentationAccessMode mode,
@@ -775,24 +739,23 @@ index 0b316c70cc..3b4337c874 100644
    AutoLock auto_lock(this);
  
    // Identify if this backing is a permanent element of the container or a
-@@ -1265,6 +1337,12 @@ bool CompoundImageBacking::NotifyBeginAccess(SharedImageBacking* backing,
+@@ -1263,6 +1335,12 @@
+       access_element->content_id_ = latest_content_id_;
+     }
      return true;
-   }
- 
++  }
++
 +  // Check under the same lock as content versions: a concurrent producer may
 +  // have changed the current backing after representation creation.
 +  if (!allow_copy) {
 +    return false;
-+  }
-+
+   }
+ 
    // STALE OR TRANSIENT PATH: Either this permanent backing is out-of-date, or
-   // it's a transient backing that needs to be initialized. We must find the
-   // permanent element that currently holds the latest content and copy from it.
 diff --git a/gpu/command_buffer/service/shared_image/compound_image_backing.h b/gpu/command_buffer/service/shared_image/compound_image_backing.h
-index 675cbf98a6..21573bd7d6 100644
 --- a/gpu/command_buffer/service/shared_image/compound_image_backing.h
 +++ b/gpu/command_buffer/service/shared_image/compound_image_backing.h
-@@ -206,7 +206,8 @@ class GPU_GLES2_EXPORT CompoundImageBacking
+@@ -206,13 +206,25 @@
    // in which case the caller must not proceed with the access.
    [[nodiscard]] bool NotifyBeginAccess(SharedImageBacking* backing,
                                         RepresentationAccessMode mode,
@@ -802,10 +765,10 @@ index 675cbf98a6..21573bd7d6 100644
  
    // Called by wrapped representations during EndAccess(). This will update the
    // CompoundImageBacking's clear rect with the accessed backing's clear rect it
-@@ -214,6 +215,17 @@ class GPU_GLES2_EXPORT CompoundImageBacking
+   // the access was a write access.
    void NotifyEndAccess(SharedImageBacking* backing,
                         RepresentationAccessMode mode);
- 
++
 +  // Native GL access with no lazy allocation or backing synchronization.
 +  // Stale content at BeginAccess causes failure instead of a CPU/GPU copy.
 +  static bool IsNativeGpuBacking(const SharedImageBacking* backing);
@@ -816,11 +779,10 @@ index 675cbf98a6..21573bd7d6 100644
 +      SharedImageManager* manager,
 +      MemoryTypeTracker* tracker,
 +      scoped_refptr<SharedContextState> context_state);
-+
+ 
    // SharedImageBacking implementation.
    void OnContextLost() override;
-   void SetPurgeable(bool purgeable) override;
-@@ -312,6 +324,8 @@ class GPU_GLES2_EXPORT CompoundImageBacking
+@@ -312,6 +324,8 @@
  #endif
  
   private:
@@ -830,10 +792,9 @@ index 675cbf98a6..21573bd7d6 100644
    friend class D3DImageBackingFactoryTest;
  
 diff --git a/gpu/command_buffer/service/shared_image/compound_image_backing_unittest.cc b/gpu/command_buffer/service/shared_image/compound_image_backing_unittest.cc
-index d8ed50392b..3caee9c32a 100644
 --- a/gpu/command_buffer/service/shared_image/compound_image_backing_unittest.cc
 +++ b/gpu/command_buffer/service/shared_image/compound_image_backing_unittest.cc
-@@ -343,6 +343,88 @@ class CompoundImageBackingCopyToGpuMemoryBufferTest
+@@ -343,6 +343,88 @@
    std::unique_ptr<SharedImageFactory> shared_image_factory_;
  };
  
@@ -923,13 +884,14 @@ index d8ed50392b..3caee9c32a 100644
    auto backing = CreateCompoundBacking(
        {SHARED_IMAGE_USAGE_DISPLAY_READ, SHARED_IMAGE_USAGE_SCANOUT});
 diff --git a/gpu/command_buffer/service/shared_image/shared_image_factory.cc b/gpu/command_buffer/service/shared_image/shared_image_factory.cc
-index 3edb0eac16..b12cbaea64 100644
 --- a/gpu/command_buffer/service/shared_image/shared_image_factory.cc
 +++ b/gpu/command_buffer/service/shared_image/shared_image_factory.cc
-@@ -382,6 +382,18 @@ SharedImageFactory::~SharedImageFactory() {
+@@ -380,6 +380,18 @@
+ SharedImageFactory::~SharedImageFactory() {
+   DCHECK(shared_images_.empty());
    factory_ref_->Invalidate();
- }
- 
++}
++
 +std::optional<SharedImageMetadata> SharedImageFactory::GetSharedImageMetadata(
 +    const Mailbox& mailbox) const {
 +  auto it = shared_images_.find(mailbox);
@@ -940,12 +902,10 @@ index 3edb0eac16..b12cbaea64 100644
 +  return SharedImageMetadata{image.format(),      image.size(),
 +                             image.color_space(), image.surface_origin(),
 +                             image.alpha_type(),  image.usage()};
-+}
-+
+ }
+ 
  bool SharedImageFactory::CreateSharedImage(
-     const Mailbox& mailbox,
-     const SharedImageInfo& si_info,
-@@ -1166,8 +1178,10 @@ SharedImageRepresentationFactory::~SharedImageRepresentationFactory() {
+@@ -1166,8 +1178,10 @@
  }
  
  std::unique_ptr<GLTextureImageRepresentation>
@@ -958,7 +918,7 @@ index 3edb0eac16..b12cbaea64 100644
  }
  
  std::unique_ptr<GLTexturePassthroughImageRepresentation>
-@@ -1181,9 +1195,10 @@ std::unique_ptr<SkiaImageRepresentation>
+@@ -1181,9 +1195,10 @@
  SharedImageRepresentationFactory::ProduceSkia(
      const Mailbox& mailbox,
      scoped_refptr<SharedContextState> context_state,
@@ -972,7 +932,6 @@ index 3edb0eac16..b12cbaea64 100644
  
  std::unique_ptr<DawnImageRepresentation>
 diff --git a/gpu/command_buffer/service/shared_image/shared_image_factory.h b/gpu/command_buffer/service/shared_image/shared_image_factory.h
-index 30d7b88110..4b5e7661fc 100644
 --- a/gpu/command_buffer/service/shared_image/shared_image_factory.h
 +++ b/gpu/command_buffer/service/shared_image/shared_image_factory.h
 @@ -6,6 +6,7 @@
@@ -983,7 +942,7 @@ index 30d7b88110..4b5e7661fc 100644
  #include <string>
  #include <vector>
  
-@@ -97,6 +98,11 @@ class GPU_GLES2_EXPORT SharedImageFactory {
+@@ -97,6 +98,11 @@
                       bool is_for_display_compositor);
    ~SharedImageFactory();
  
@@ -995,7 +954,7 @@ index 30d7b88110..4b5e7661fc 100644
    bool CreateSharedImage(
        const Mailbox& mailbox,
        const SharedImageInfo& si_info,
-@@ -282,16 +288,21 @@ class GPU_GLES2_EXPORT SharedImageRepresentationFactory {
+@@ -282,16 +288,21 @@
    // NOTE: This object *must* outlive all objects created via the below methods,
    // as the |memory_type_tracker_| instance variable that it supplies to them is
    // used in their destruction process.
@@ -1020,7 +979,6 @@ index 30d7b88110..4b5e7661fc 100644
        const Mailbox& mailbox,
        const wgpu::Device& device,
 diff --git a/gpu/command_buffer/service/shared_image/shared_image_factory_unittest.cc b/gpu/command_buffer/service/shared_image/shared_image_factory_unittest.cc
-index 7c68eee37f..1785072bc1 100644
 --- a/gpu/command_buffer/service/shared_image/shared_image_factory_unittest.cc
 +++ b/gpu/command_buffer/service/shared_image/shared_image_factory_unittest.cc
 @@ -10,11 +10,13 @@
@@ -1037,7 +995,7 @@ index 7c68eee37f..1785072bc1 100644
  #include "ui/gfx/color_space.h"
  #include "ui/gl/gl_bindings.h"
  #include "ui/gl/gl_context.h"
-@@ -109,6 +111,81 @@ TEST_F(SharedImageFactoryTest, CreateVideoEncodeGpuMemoryBufferHandles) {
+@@ -109,6 +111,81 @@
  }
  #endif
  
@@ -1120,7 +1078,6 @@ index 7c68eee37f..1785072bc1 100644
    auto mailbox = Mailbox::Generate();
    auto format = viz::SinglePlaneFormat::kRGBA_8888;
 diff --git a/gpu/command_buffer/service/shared_image/shared_image_manager.cc b/gpu/command_buffer/service/shared_image/shared_image_manager.cc
-index c38e78252b..7d75a45abf 100644
 --- a/gpu/command_buffer/service/shared_image/shared_image_manager.cc
 +++ b/gpu/command_buffer/service/shared_image/shared_image_manager.cc
 @@ -25,6 +25,7 @@
@@ -1131,7 +1088,7 @@ index c38e78252b..7d75a45abf 100644
  #include "gpu/command_buffer/service/shared_image/shared_image_representation.h"
  #include "ui/gl/trace_util.h"
  
-@@ -200,7 +201,8 @@ SharedImageManager::AddSecondaryReference(const Mailbox& mailbox,
+@@ -200,7 +201,8 @@
  
  std::unique_ptr<GLTextureImageRepresentation>
  SharedImageManager::ProduceGLTexture(const Mailbox& mailbox,
@@ -1141,7 +1098,7 @@ index c38e78252b..7d75a45abf 100644
    CALLED_ON_VALID_THREAD();
  
    AutoLock autolock(this);
-@@ -212,7 +214,18 @@ SharedImageManager::ProduceGLTexture(const Mailbox& mailbox,
+@@ -212,7 +214,18 @@
      return nullptr;
    }
  
@@ -1161,7 +1118,7 @@ index c38e78252b..7d75a45abf 100644
    if (!representation) {
      LOG(ERROR) << "SharedImageManager::ProduceGLTexture: Trying to produce a "
                    "representation from an incompatible backing: "
-@@ -251,7 +264,8 @@ std::unique_ptr<SkiaImageRepresentation> SharedImageManager::ProduceSkia(
+@@ -251,7 +264,8 @@
      const Mailbox& mailbox,
      MemoryTypeTracker* tracker,
      scoped_refptr<SharedContextState> context_state,
@@ -1171,7 +1128,7 @@ index c38e78252b..7d75a45abf 100644
    CALLED_ON_VALID_THREAD();
  
    AutoLock autolock(this);
-@@ -270,7 +284,21 @@ std::unique_ptr<SkiaImageRepresentation> SharedImageManager::ProduceSkia(
+@@ -270,7 +284,21 @@
      return nullptr;
    }
  
@@ -1195,10 +1152,9 @@ index c38e78252b..7d75a45abf 100644
      LOG(ERROR) << "SharedImageManager::ProduceSkia: Trying to produce a "
                    "Skia representation from an incompatible backing: "
 diff --git a/gpu/command_buffer/service/shared_image/shared_image_manager.h b/gpu/command_buffer/service/shared_image/shared_image_manager.h
-index 66f83b95d4..a0dde68fe3 100644
 --- a/gpu/command_buffer/service/shared_image/shared_image_manager.h
 +++ b/gpu/command_buffer/service/shared_image/shared_image_manager.h
-@@ -79,18 +79,23 @@ class GPU_GLES2_EXPORT SharedImageManager
+@@ -79,18 +79,23 @@
    // Accessors which return a SharedImageRepresentation. Representations also
    // take a ref on the mailbox, releasing it when the representation is
    // destroyed.
@@ -1225,7 +1181,6 @@ index 66f83b95d4..a0dde68fe3 100644
    // ProduceDawn must also be called using same |device| if
    // using the same |mailbox|. This is because the underlying shared image
 diff --git a/gpu/ipc/client/client_shared_image_interface.cc b/gpu/ipc/client/client_shared_image_interface.cc
-index d4b9df3beb..9024c4094c 100644
 --- a/gpu/ipc/client/client_shared_image_interface.cc
 +++ b/gpu/ipc/client/client_shared_image_interface.cc
 @@ -19,6 +19,10 @@
@@ -1240,10 +1195,9 @@ index d4b9df3beb..9024c4094c 100644
  ClientSharedImageInterface::ClientSharedImageInterface(
      SharedImageInterfaceProxy* proxy,
 diff --git a/gpu/ipc/client/client_shared_image_interface.h b/gpu/ipc/client/client_shared_image_interface.h
-index 33143b7a19..c55f913ad7 100644
 --- a/gpu/ipc/client/client_shared_image_interface.h
 +++ b/gpu/ipc/client/client_shared_image_interface.h
-@@ -132,6 +132,8 @@ class GPU_IPC_CLIENT_EXPORT ClientSharedImageInterface
+@@ -132,6 +132,8 @@
    void SignalSyncToken(std::vector<SyncToken> sync_tokens,
                         base::OnceClosure callback) override;
  
@@ -1253,10 +1207,9 @@ index 33143b7a19..c55f913ad7 100644
  
   protected:
 diff --git a/gpu/ipc/common/BUILD.gn b/gpu/ipc/common/BUILD.gn
-index 243a2b9b4f..765cfc9d27 100644
 --- a/gpu/ipc/common/BUILD.gn
 +++ b/gpu/ipc/common/BUILD.gn
-@@ -240,6 +240,7 @@ mojom("interfaces") {
+@@ -240,6 +240,7 @@
      "gpu_peak_memory.mojom",
      "mailbox.mojom",
      "memory_stats.mojom",
@@ -1265,10 +1218,9 @@ index 243a2b9b4f..765cfc9d27 100644
      "shared_image_metadata.mojom",
      "shared_image_pool_id.mojom",
 diff --git a/gpu/ipc/common/gpu_channel.mojom b/gpu/ipc/common/gpu_channel.mojom
-index 4c451d2aac..5fff1d23c8 100644
 --- a/gpu/ipc/common/gpu_channel.mojom
 +++ b/gpu/ipc/common/gpu_channel.mojom
-@@ -11,6 +11,7 @@ import "gpu/ipc/common/context_type.mojom";
+@@ -11,6 +11,7 @@
  import "gpu/ipc/common/gpu_feature_info.mojom";
  import "gpu/ipc/common/gpu_info.mojom";
  import "gpu/ipc/common/mailbox.mojom";
@@ -1276,7 +1228,7 @@ index 4c451d2aac..5fff1d23c8 100644
  import "gpu/ipc/common/shared_image_capabilities.mojom";
  import "gpu/ipc/common/shared_image_metadata.mojom";
  import "gpu/ipc/common/shared_image_pool_id.mojom";
-@@ -84,6 +85,10 @@ struct CommandBufferState {
+@@ -84,6 +85,10 @@
  // this interface is associated with each C++ GpuChannel/Host's underlying
  // IPC::Channel interface. Eventually it will replace the IPC::Channel.
  interface GpuChannel {
@@ -1288,10 +1240,9 @@ index 4c451d2aac..5fff1d23c8 100644
    // This is only supported in testing environments with the GPU benchmarking
    // extension enabled and is otherwise ignored.
 diff --git a/gpu/ipc/common/mock_gpu_channel.h b/gpu/ipc/common/mock_gpu_channel.h
-index bd3dfa3418..2cb104ef58 100644
 --- a/gpu/ipc/common/mock_gpu_channel.h
 +++ b/gpu/ipc/common/mock_gpu_channel.h
-@@ -19,6 +19,9 @@ class MockGpuChannel : public mojom::GpuChannel {
+@@ -19,6 +19,9 @@
    ~MockGpuChannel() override;
  
    // mojom::GpuChannel:
@@ -1303,7 +1254,6 @@ index bd3dfa3418..2cb104ef58 100644
    MOCK_METHOD1(GetChannelToken, void(GetChannelTokenCallback));
 diff --git a/gpu/ipc/common/nvidia_vsr.mojom b/gpu/ipc/common/nvidia_vsr.mojom
 new file mode 100644
-index 0000000000..c2af1ae430
 --- /dev/null
 +++ b/gpu/ipc/common/nvidia_vsr.mojom
 @@ -0,0 +1,26 @@
@@ -1334,7 +1284,6 @@ index 0000000000..c2af1ae430
 +      (bool success, string status, SyncToken ready_token, float gpu_ms);
 +};
 diff --git a/gpu/ipc/service/BUILD.gn b/gpu/ipc/service/BUILD.gn
-index 71c53f0d23..ef42129b72 100644
 --- a/gpu/ipc/service/BUILD.gn
 +++ b/gpu/ipc/service/BUILD.gn
 @@ -3,6 +3,8 @@
@@ -1346,7 +1295,7 @@ index 71c53f0d23..ef42129b72 100644
  import("//gpu/vulkan/features.gni")
  import("//skia/features.gni")
  import("//testing/test.gni")
-@@ -55,6 +57,7 @@ component("service") {
+@@ -55,6 +57,7 @@
    }
    public_deps = [
      "//base",
@@ -1354,7 +1303,7 @@ index 71c53f0d23..ef42129b72 100644
      "//build:chromecast_buildflags",
      "//components/viz/common",
      "//gpu/config",
-@@ -87,6 +90,11 @@ component("service") {
+@@ -87,6 +90,11 @@
      "//services/on_device_model:ml_internal_buildflags",
      "//ui/base:ozone_buildflags",
    ]
@@ -1366,7 +1315,7 @@ index 71c53f0d23..ef42129b72 100644
    libs = []
    ldflags = []
    if (is_win) {
-@@ -170,3 +178,15 @@ component("service") {
+@@ -170,3 +178,15 @@
      deps += [ "//third_party/dawn/include/dawn:cpp_headers" ]
    }
  }
@@ -1383,7 +1332,6 @@ index 71c53f0d23..ef42129b72 100644
 +  }
 +}
 diff --git a/gpu/ipc/service/gpu_channel.cc b/gpu/ipc/service/gpu_channel.cc
-index 410fa47791..dd5b1b5e74 100644
 --- a/gpu/ipc/service/gpu_channel.cc
 +++ b/gpu/ipc/service/gpu_channel.cc
 @@ -3,6 +3,10 @@
@@ -1397,7 +1345,7 @@ index 410fa47791..dd5b1b5e74 100644
  
  #include <cstdint>
  #include <utility>
-@@ -145,6 +149,9 @@ class GPU_IPC_SERVICE_EXPORT GpuChannelMessageFilter
+@@ -145,6 +149,9 @@
    SequenceId GetSequenceId(int32_t route_id) const;
  
    // mojom::GpuChannel:
@@ -1407,7 +1355,7 @@ index 410fa47791..dd5b1b5e74 100644
    void CrashForTesting() override;
    void TerminateForTesting() override;
    void GetChannelToken(GetChannelTokenCallback callback) override;
-@@ -516,6 +523,23 @@ void GpuChannelMessageFilter::Flush(FlushCallback callback) {
+@@ -516,6 +523,23 @@
    std::move(callback).Run();
  }
  
@@ -1431,7 +1379,7 @@ index 410fa47791..dd5b1b5e74 100644
  void GpuChannelMessageFilter::CreateCommandBuffer(
      mojom::CreateCommandBufferParamsPtr params,
      int32_t routing_id,
-@@ -742,6 +766,12 @@ GpuChannel::GpuChannel(
+@@ -742,6 +766,12 @@
  }
  
  GpuChannel::~GpuChannel() {
@@ -1444,7 +1392,7 @@ index 410fa47791..dd5b1b5e74 100644
    // Clear stubs first because of dependencies.
    stubs_.clear();
  
-@@ -1006,6 +1036,34 @@ class ScopedCreateCommandBufferResponder {
+@@ -1006,6 +1036,34 @@
    GLCapabilities gl_capabilities_;
  };
  
@@ -1480,7 +1428,6 @@ index 410fa47791..dd5b1b5e74 100644
      mojom::CreateCommandBufferParamsPtr init_params,
      int32_t route_id,
 diff --git a/gpu/ipc/service/gpu_channel.h b/gpu/ipc/service/gpu_channel.h
-index 614aa17741..1cec5149f8 100644
 --- a/gpu/ipc/service/gpu_channel.h
 +++ b/gpu/ipc/service/gpu_channel.h
 @@ -29,6 +29,7 @@
@@ -1499,7 +1446,7 @@ index 614aa17741..1cec5149f8 100644
  class DCOMPTexture;
  class FenceSyncReleaseDelegate;
  class GpuChannelManager;
-@@ -201,6 +203,11 @@ class GPU_IPC_SERVICE_EXPORT GpuChannel : public IPC::Listener,
+@@ -201,6 +203,11 @@
      return shared_image_capabilities_;
    }
  
@@ -1511,7 +1458,7 @@ index 614aa17741..1cec5149f8 100644
    void CreateCommandBuffer(
        mojom::CreateCommandBufferParamsPtr init_params,
        int32_t routing_id,
-@@ -288,6 +295,9 @@ class GPU_IPC_SERVICE_EXPORT GpuChannel : public IPC::Listener,
+@@ -288,6 +295,9 @@
    // process use.
    scoped_refptr<gl::GLShareGroup> share_group_;
  
@@ -1522,7 +1469,6 @@ index 614aa17741..1cec5149f8 100644
  
    const bool is_gpu_host_;
 diff --git a/gpu/ipc/service/gpu_channel_test_common.cc b/gpu/ipc/service/gpu_channel_test_common.cc
-index 135e8b97d4..0345749902 100644
 --- a/gpu/ipc/service/gpu_channel_test_common.cc
 +++ b/gpu/ipc/service/gpu_channel_test_common.cc
 @@ -7,6 +7,7 @@
@@ -1559,7 +1505,7 @@ index 135e8b97d4..0345749902 100644
    GpuPreferences prefs;
    prefs.use_passthrough_cmd_decoder = features::UsePassthroughCommandDecoder();
    return prefs;
-@@ -78,20 +83,28 @@ class TestGpuChannelManagerDelegate : public GpuChannelManagerDelegate {
+@@ -78,20 +83,28 @@
  };
  
  GpuChannelTestCommon::GpuChannelTestCommon(bool use_stub_bindings)
@@ -1593,7 +1539,7 @@ index 135e8b97d4..0345749902 100644
      if (features::UsePassthroughCommandDecoder()) {
        display_ =
            gl::GLSurfaceTestSupport::InitializeOneOffWithNullAngleBindings();
-@@ -107,10 +120,10 @@ GpuChannelTestCommon::GpuChannelTestCommon(
+@@ -107,10 +120,10 @@
        std::move(enabled_workarounds);
  
    channel_manager_ = std::make_unique<GpuChannelManager>(
@@ -1607,7 +1553,7 @@ index 135e8b97d4..0345749902 100644
        sync_point_manager_.get(), shared_image_manager_.get(),
        std::move(feature_info), /*use_shader_cache_count_shm_=*/nullptr,
        gl::init::CreateOffscreenGLSurface(display_, gfx::Size()),
-@@ -120,8 +133,12 @@ GpuChannelTestCommon::GpuChannelTestCommon(
+@@ -120,8 +133,12 @@
  GpuChannelTestCommon::~GpuChannelTestCommon() {
    // Command buffers can post tasks and run GL in destruction so do this first.
    channel_manager_ = nullptr;
@@ -1623,10 +1569,9 @@ index 135e8b97d4..0345749902 100644
  
  GpuChannel* GpuChannelTestCommon::CreateChannel(int32_t client_id,
 diff --git a/gpu/ipc/service/gpu_channel_test_common.h b/gpu/ipc/service/gpu_channel_test_common.h
-index 0e38b456d7..779027c585 100644
 --- a/gpu/ipc/service/gpu_channel_test_common.h
 +++ b/gpu/ipc/service/gpu_channel_test_common.h
-@@ -38,7 +38,8 @@ class GpuChannelTestCommon : public testing::Test {
+@@ -38,7 +38,8 @@
    explicit GpuChannelTestCommon(bool use_stub_bindings);
    // Constructor which allows a custom set of GPU driver bug workarounds.
    GpuChannelTestCommon(std::vector<int32_t> enabled_workarounds,
@@ -1636,7 +1581,7 @@ index 0e38b456d7..779027c585 100644
  
    GpuChannelTestCommon(const GpuChannelTestCommon&) = delete;
    GpuChannelTestCommon& operator=(const GpuChannelTestCommon&) = delete;
-@@ -48,7 +49,7 @@ class GpuChannelTestCommon : public testing::Test {
+@@ -48,7 +49,7 @@
   protected:
    Scheduler* scheduler() const { return scheduler_.get(); }
    GpuChannelManager* channel_manager() const { return channel_manager_.get(); }
@@ -1645,7 +1590,7 @@ index 0e38b456d7..779027c585 100644
    base::TestMemoryConsumerRegistry& test_memory_consumer_registry() {
      return test_memory_consumer_registry_;
    }
-@@ -66,7 +67,7 @@ class GpuChannelTestCommon : public testing::Test {
+@@ -66,7 +67,7 @@
    base::UnsafeSharedMemoryRegion GetSharedMemoryRegion();
  
   private:
@@ -1654,7 +1599,7 @@ index 0e38b456d7..779027c585 100644
    base::TestMemoryConsumerRegistry test_memory_consumer_registry_;
    std::unique_ptr<base::trace_event::MemoryDumpManager> memory_dump_manager_;
    std::unique_ptr<SyncPointManager> sync_point_manager_;
-@@ -74,6 +75,7 @@ class GpuChannelTestCommon : public testing::Test {
+@@ -74,6 +75,7 @@
    std::unique_ptr<Scheduler> scheduler_;
    std::unique_ptr<TestGpuChannelManagerDelegate> channel_manager_delegate_;
    std::unique_ptr<GpuChannelManager> channel_manager_;
@@ -2176,7 +2121,6 @@ new file mode 100644
 +}  // namespace gpu
 diff --git a/gpu/ipc/service/nvidia_vsr_gpu_service.h b/gpu/ipc/service/nvidia_vsr_gpu_service.h
 new file mode 100644
-index 0000000000..0a718445e4
 --- /dev/null
 +++ b/gpu/ipc/service/nvidia_vsr_gpu_service.h
 @@ -0,0 +1,83 @@
@@ -2469,7 +2413,6 @@ new file mode 100644
 +}  // namespace gpu
 diff --git a/gpu/ipc/service/nvidia_vsr_gpu_worker.h b/gpu/ipc/service/nvidia_vsr_gpu_worker.h
 new file mode 100644
-index 0000000000..d08bd296e3
 --- /dev/null
 +++ b/gpu/ipc/service/nvidia_vsr_gpu_worker.h
 @@ -0,0 +1,40 @@
@@ -2515,7 +2458,6 @@ index 0000000000..d08bd296e3
 +#endif
 diff --git a/gpu/ipc/service/nvidia_vsr_native_integration_unittest.cc b/gpu/ipc/service/nvidia_vsr_native_integration_unittest.cc
 new file mode 100644
-index 0000000000..ec8ea839aa
 --- /dev/null
 +++ b/gpu/ipc/service/nvidia_vsr_native_integration_unittest.cc
 @@ -0,0 +1,324 @@
@@ -2844,10 +2786,9 @@ index 0000000000..ec8ea839aa
 +}  // namespace
 +}  // namespace gpu
 diff --git a/media/base/BUILD.gn b/media/base/BUILD.gn
-index 3a1e7f595f..70343aa83e 100644
 --- a/media/base/BUILD.gn
 +++ b/media/base/BUILD.gn
-@@ -382,6 +382,7 @@ source_set("base") {
+@@ -382,6 +382,7 @@
      "video_frame_pool.h",
      "video_renderer.cc",
      "video_renderer.h",
@@ -2856,10 +2797,9 @@ index 3a1e7f595f..70343aa83e 100644
      "video_spatial_format.cc",
      "video_spatial_format.h",
 diff --git a/media/base/media_switches.cc b/media/base/media_switches.cc
-index 6576dae682..a3b271f3b3 100644
 --- a/media/base/media_switches.cc
 +++ b/media/base/media_switches.cc
-@@ -353,6 +353,8 @@ const char kHardwareVideoDevicePath[] = "hardware-video-device-path";
+@@ -353,6 +353,8 @@
  namespace media {
  
  // Whether we should allow color space changes to flush AcceleratedVideoDecoder.
@@ -2869,24 +2809,22 @@ index 6576dae682..a3b271f3b3 100644
  
  // Controls whether VideoFrameConverter accurately maps RGB to YUV color spaces
 diff --git a/media/base/media_switches.h b/media/base/media_switches.h
-index 6063916898..333ea32f2a 100644
 --- a/media/base/media_switches.h
 +++ b/media/base/media_switches.h
-@@ -129,6 +129,9 @@ namespace media {
+@@ -128,6 +128,9 @@
+ 
  // All features in alphabetical order. The features should be documented
  // alongside the definition of their values in the .cc file.
- 
++
 +// Metadata-only diagnostic; does not import or process pixels.
 +MEDIA_EXPORT BASE_DECLARE_FEATURE(kNvidiaVsrProbe);
-+
+ 
  MEDIA_EXPORT BASE_DECLARE_FEATURE(kAVDColorSpaceChanges);
  // TODO(crbug.com/467555325): Remove after M153 reaches stable.
- MEDIA_EXPORT BASE_DECLARE_FEATURE(kAccurateVideoFrameConverterColorSpace);
 diff --git a/media/base/video_frame_metadata.cc b/media/base/video_frame_metadata.cc
-index 98ea383ba5..3cc9c4c3e6 100644
 --- a/media/base/video_frame_metadata.cc
 +++ b/media/base/video_frame_metadata.cc
-@@ -44,6 +44,7 @@ void VideoFrameMetadata::MergeMetadataFrom(
+@@ -44,6 +44,7 @@
    MERGE_VALUE_FIELD(interactive_content, metadata_source);
    MERGE_OPTIONAL_FIELD(reference_time, metadata_source);
    MERGE_VALUE_FIELD(read_lock_fences_enabled, metadata_source);
@@ -2895,24 +2833,22 @@ index 98ea383ba5..3cc9c4c3e6 100644
    MERGE_VALUE_FIELD(in_surface_view, metadata_source);
    MERGE_VALUE_FIELD(wants_promotion_hint, metadata_source);
 diff --git a/media/base/video_frame_metadata.h b/media/base/video_frame_metadata.h
-index b08acf961c..85a5d9f2ca 100644
 --- a/media/base/video_frame_metadata.h
 +++ b/media/base/video_frame_metadata.h
-@@ -129,6 +129,11 @@ struct MEDIA_EXPORT VideoFrameMetadata {
+@@ -128,6 +128,11 @@
+   // VideoFrameExternalResources produced from the associated video frame
    // should use read lock fences.
    bool read_lock_fences_enabled = false;
- 
++
 +  // True when the producer knows every pixel in this frame is fully opaque.
 +  // This is stronger than the pixel format: ARGB storage may still contain an
 +  // opaque video frame, but consumers must not assume that without this bit.
 +  bool alpha_is_opaque = false;
-+
+ 
    // Indicates that the frame has a rotation and/or flip.
    std::optional<VideoTransformation> transformation;
- 
 diff --git a/media/base/video_renderer_sink.cc b/media/base/video_renderer_sink.cc
 new file mode 100644
-index 0000000000..a69728d930
 --- /dev/null
 +++ b/media/base/video_renderer_sink.cc
 @@ -0,0 +1,10 @@
@@ -2927,7 +2863,6 @@ index 0000000000..a69728d930
 +                                             uint64_t,uint64_t) {}
 +}  // namespace media
 diff --git a/media/base/video_renderer_sink.h b/media/base/video_renderer_sink.h
-index 8031eb6ff8..fd0c303874 100644
 --- a/media/base/video_renderer_sink.h
 +++ b/media/base/video_renderer_sink.h
 @@ -5,6 +5,9 @@
@@ -2940,7 +2875,7 @@ index 8031eb6ff8..fd0c303874 100644
  #include "base/memory/scoped_refptr.h"
  #include "base/time/time.h"
  #include "media/base/media_export.h"
-@@ -71,6 +74,17 @@ class MEDIA_EXPORT VideoRendererSink {
+@@ -71,6 +74,17 @@
                                  bool repaint_duplicate_frame = false) = 0;
  
    virtual ~VideoRendererSink() {}
@@ -2959,27 +2894,25 @@ index 8031eb6ff8..fd0c303874 100644
  
  }  // namespace media
 diff --git a/media/filters/video_renderer_algorithm.cc b/media/filters/video_renderer_algorithm.cc
-index 0cb3d48dd1..abca5f8c2a 100644
 --- a/media/filters/video_renderer_algorithm.cc
 +++ b/media/filters/video_renderer_algorithm.cc
-@@ -13,6 +13,12 @@ namespace media {
+@@ -12,6 +12,12 @@
+ namespace media {
  
  const int kMaxOutOfOrderFrameLogs = 10;
- 
++
 +void VideoRendererAlgorithm::VisitQueuedFrames(
 +    const base::RepeatingCallback<bool(const scoped_refptr<VideoFrame>&)>& visitor) const {
 +  for(const auto& entry:frame_queue_)
 +    if(visitor.Run(entry.frame)) break;
 +}
-+
+ 
  VideoRendererAlgorithm::ReadyFrame::ReadyFrame(
      scoped_refptr<VideoFrame> ready_frame)
-     : frame(std::move(ready_frame)),
 diff --git a/media/filters/video_renderer_algorithm.h b/media/filters/video_renderer_algorithm.h
-index 14e91da912..52917dd7d4 100644
 --- a/media/filters/video_renderer_algorithm.h
 +++ b/media/filters/video_renderer_algorithm.h
-@@ -140,6 +140,11 @@ class MEDIA_EXPORT VideoRendererAlgorithm {
+@@ -140,6 +140,11 @@
    // reason and such stoppage shouldn't be counted against future frames.
    void set_time_stopped() { was_time_moving_ = false; }
  
@@ -2992,10 +2925,9 @@ index 14e91da912..52917dd7d4 100644
  
    // Returns the average of the duration of all frames in |frame_queue_|
 diff --git a/media/gpu/chromeos/mailbox_video_frame_converter.cc b/media/gpu/chromeos/mailbox_video_frame_converter.cc
-index 2773511ff7..7b200406c5 100644
 --- a/media/gpu/chromeos/mailbox_video_frame_converter.cc
 +++ b/media/gpu/chromeos/mailbox_video_frame_converter.cc
-@@ -151,6 +151,11 @@ void MailboxVideoFrameConverter::ConvertFrameImpl(
+@@ -151,6 +151,11 @@
        color_space = GetDefaultColorSpace(si_format.value());
      }
    }
@@ -3007,7 +2939,7 @@ index 2773511ff7..7b200406c5 100644
  
    auto shared_image_it = shared_images_.find(origin_frame->unique_id());
    // If there's a |stored_shared_image| associated with |origin_frame|, update
-@@ -162,7 +167,8 @@ void MailboxVideoFrameConverter::ConvertFrameImpl(
+@@ -162,7 +167,8 @@
      if (stored_shared_image &&
          stored_shared_image->size() ==
              to_shared_image_size(origin_frame, frame) &&
@@ -3017,7 +2949,7 @@ index 2773511ff7..7b200406c5 100644
        gpu::SyncToken sync_token =
            stored_shared_image->BackingWasExternallyUpdated(gpu::SyncToken());
        shared_image_interface_->VerifySyncToken(sync_token);
-@@ -273,11 +279,17 @@ MailboxVideoFrameConverter::GenerateSharedImage(
+@@ -273,11 +279,17 @@
    if (!color_space.IsValid()) {
      color_space = GetDefaultColorSpace(si_format.value());
    }
@@ -3039,10 +2971,9 @@ index 2773511ff7..7b200406c5 100644
      OnError(FROM_HERE, "Failed to create shared image.");
      return nullptr;
 diff --git a/media/gpu/chromeos/mailbox_video_frame_converter_unittest.cc b/media/gpu/chromeos/mailbox_video_frame_converter_unittest.cc
-index c9345190d7..2e107349e2 100644
 --- a/media/gpu/chromeos/mailbox_video_frame_converter_unittest.cc
 +++ b/media/gpu/chromeos/mailbox_video_frame_converter_unittest.cc
-@@ -234,6 +234,56 @@ class MailboxVideoFrameConverterTest : public ::testing::Test {
+@@ -234,6 +234,56 @@
    std::unique_ptr<FrameResourceConverter> converter_;
  };
  
@@ -3100,10 +3031,9 @@ index c9345190d7..2e107349e2 100644
      : public MailboxVideoFrameConverterTest,
        public ::testing::WithParamInterface<bool> {
 diff --git a/media/gpu/chromeos/video_decoder_pipeline.cc b/media/gpu/chromeos/video_decoder_pipeline.cc
-index 7fa0c0787a..068b74c0c9 100644
 --- a/media/gpu/chromeos/video_decoder_pipeline.cc
 +++ b/media/gpu/chromeos/video_decoder_pipeline.cc
-@@ -669,6 +669,8 @@ void VideoDecoderPipeline::InitializeTask(const VideoDecoderConfig& config,
+@@ -669,6 +669,8 @@
                                            const WaitingCB& waiting_cb) {
    DVLOGF(3);
    DCHECK_CALLED_ON_VALID_SEQUENCE(decoder_sequence_checker_);
@@ -3112,7 +3042,7 @@ index 7fa0c0787a..068b74c0c9 100644
  
    client_output_cb_ = std::move(output_cb);
    waiting_cb_ = std::move(waiting_cb);
-@@ -935,6 +937,8 @@ void VideoDecoderPipeline::OnFrameDecoded(scoped_refptr<FrameResource> frame) {
+@@ -935,6 +937,8 @@
    DVLOGF(4);
    TRACE_EVENT1("media,gpu", "VideoDecoderPipeline::OnFrameDecoded", "timestamp",
                 (frame ? frame->timestamp().InMicroseconds() : 0));
@@ -3121,7 +3051,7 @@ index 7fa0c0787a..068b74c0c9 100644
  
  #if BUILDFLAG(IS_CHROMEOS)
    if (buffer_transcryptor_) {
-@@ -964,6 +968,8 @@ void VideoDecoderPipeline::OnFrameProcessed(
+@@ -964,6 +968,8 @@
    DVLOGF(4);
    TRACE_EVENT1("media,gpu", "VideoDecoderPipeline::OnFrameProcessed",
                 "timestamp", (frame ? frame->timestamp().InMicroseconds() : 0));
@@ -3131,10 +3061,9 @@ index 7fa0c0787a..068b74c0c9 100644
  }
  
 diff --git a/media/gpu/chromeos/video_decoder_pipeline.h b/media/gpu/chromeos/video_decoder_pipeline.h
-index 58537374c5..3331e026f5 100644
 --- a/media/gpu/chromeos/video_decoder_pipeline.h
 +++ b/media/gpu/chromeos/video_decoder_pipeline.h
-@@ -447,6 +447,10 @@ class MEDIA_GPU_EXPORT VideoDecoderPipeline : public VideoDecoder,
+@@ -447,6 +447,10 @@
    std::unique_ptr<VideoDecoderMixin> decoder_
        GUARDED_BY_CONTEXT(decoder_sequence_checker_);
  
@@ -3146,10 +3075,9 @@ index 58537374c5..3331e026f5 100644
    std::atomic_int decoder_max_decode_requests_ = kDefaultMaxDecodeRequests;
  
 diff --git a/media/gpu/vaapi/BUILD.gn b/media/gpu/vaapi/BUILD.gn
-index 0dae890813..76c3136180 100644
 --- a/media/gpu/vaapi/BUILD.gn
 +++ b/media/gpu/vaapi/BUILD.gn
-@@ -14,7 +14,17 @@ assert(use_vaapi)
+@@ -14,7 +14,17 @@
  # Ensure Ozone is the default configuration.
  assert(use_ozone)
  
@@ -3168,24 +3096,23 @@ index 0dae890813..76c3136180 100644
    extra_header = "va_stub_header.fragment"
    sigs = [ "va.sigs" ]
    if (is_chromeos) {
-@@ -29,6 +39,12 @@ generate_stubs("libva_stubs") {
+@@ -27,6 +37,12 @@
+     "//base",
+     "//media/gpu:buildflags",
    ]
- }
- 
++}
++
 +if (is_component_build) {
 +  shared_library("libva_stubs") {
 +    public_deps = [ ":libva_stubs_source" ]
 +  }
-+}
-+
+ }
+ 
  source_set("vaapi") {
-   defines = [ "MEDIA_GPU_IMPLEMENTATION" ]
-   sources = [
 diff --git a/media/gpu/vaapi/vaapi_video_decoder.cc b/media/gpu/vaapi/vaapi_video_decoder.cc
-index 952720dd66..49480f8ef8 100644
 --- a/media/gpu/vaapi/vaapi_video_decoder.cc
 +++ b/media/gpu/vaapi/vaapi_video_decoder.cc
-@@ -183,6 +183,8 @@ void VaapiVideoDecoder::Initialize(const VideoDecoderConfig& config,
+@@ -183,6 +183,8 @@
    DCHECK(config.IsValidConfig());
  
    pending_init_cb_ = std::move(init_cb);
@@ -3194,20 +3121,19 @@ index 952720dd66..49480f8ef8 100644
  
    // Reinitializing the decoder is allowed if there are no pending decodes.
    if (current_decode_task_ || !decode_task_queue_.empty() ||
-@@ -600,6 +602,8 @@ void VaapiVideoDecoder::SurfaceReady(
+@@ -599,6 +601,8 @@
+ 
      frame = std::move(wrapped_frame);
    }
- 
-+  frame->metadata().alpha_is_opaque = alpha_is_opaque_;
 +
++  frame->metadata().alpha_is_opaque = alpha_is_opaque_;
+ 
  #if BUILDFLAG(IS_CHROMEOS)
    if (cdm_context_ref_ && !transcryption_) {
-     // Store the VA-API protected session ID so that it can be re-used for
 diff --git a/media/gpu/vaapi/vaapi_video_decoder.h b/media/gpu/vaapi/vaapi_video_decoder.h
-index af24707ede..e1f0541f0c 100644
 --- a/media/gpu/vaapi/vaapi_video_decoder.h
 +++ b/media/gpu/vaapi/vaapi_video_decoder.h
-@@ -221,6 +221,7 @@ class VaapiVideoDecoder : public VideoDecoderMixin,
+@@ -221,6 +221,7 @@
    // Bitstream information, written during Initialize().
    VideoCodecProfile profile_ GUARDED_BY_CONTEXT(sequence_checker_) =
        VIDEO_CODEC_PROFILE_UNKNOWN;
@@ -3216,10 +3142,9 @@ index af24707ede..e1f0541f0c 100644
    gfx::HDRMetadata static_hdr_metadata_ GUARDED_BY_CONTEXT(sequence_checker_);
  
 diff --git a/media/mojo/mojom/media_types.mojom b/media/mojo/mojom/media_types.mojom
-index 4d83ad03b4..09af1e047d 100644
 --- a/media/mojo/mojom/media_types.mojom
 +++ b/media/mojo/mojom/media_types.mojom
-@@ -431,6 +431,8 @@ struct VideoFrameMetadata {
+@@ -431,6 +431,8 @@
  
    bool read_lock_fences_enabled;
  
@@ -3229,10 +3154,9 @@ index 4d83ad03b4..09af1e047d 100644
  
    bool in_surface_view;
 diff --git a/media/mojo/mojom/video_frame_metadata_mojom_traits.cc b/media/mojo/mojom/video_frame_metadata_mojom_traits.cc
-index cf0ba06445..234c36befc 100644
 --- a/media/mojo/mojom/video_frame_metadata_mojom_traits.cc
 +++ b/media/mojo/mojom/video_frame_metadata_mojom_traits.cc
-@@ -100,6 +100,7 @@ bool StructTraits<media::mojom::VideoFrameMetadataDataView,
+@@ -100,6 +100,7 @@
    output->is_webgpu_compatible = input.is_webgpu_compatible();
    output->power_efficient = input.power_efficient();
    output->read_lock_fences_enabled = input.read_lock_fences_enabled();
@@ -3241,10 +3165,9 @@ index cf0ba06445..234c36befc 100644
  
    // double.
 diff --git a/media/mojo/mojom/video_frame_metadata_mojom_traits.h b/media/mojo/mojom/video_frame_metadata_mojom_traits.h
-index 41d2bbd2c9..04689ad01f 100644
 --- a/media/mojo/mojom/video_frame_metadata_mojom_traits.h
 +++ b/media/mojo/mojom/video_frame_metadata_mojom_traits.h
-@@ -94,6 +94,10 @@ struct StructTraits<media::mojom::VideoFrameMetadataDataView,
+@@ -94,6 +94,10 @@
      return input.read_lock_fences_enabled;
    }
  
@@ -3256,10 +3179,9 @@ index 41d2bbd2c9..04689ad01f 100644
      return input.interactive_content;
    }
 diff --git a/media/mojo/mojom/video_frame_metadata_mojom_traits_unittest.cc b/media/mojo/mojom/video_frame_metadata_mojom_traits_unittest.cc
-index a6f4567e69..b1f0699d01 100644
 --- a/media/mojo/mojom/video_frame_metadata_mojom_traits_unittest.cc
 +++ b/media/mojo/mojom/video_frame_metadata_mojom_traits_unittest.cc
-@@ -130,6 +130,7 @@ TEST_F(VideoFrameMetadataStructTraitsTest, ValidMetadata) {
+@@ -130,6 +130,7 @@
    metadata_in.is_webgpu_compatible = true;
    metadata_in.power_efficient = true;
    metadata_in.read_lock_fences_enabled = true;
@@ -3267,7 +3189,7 @@ index a6f4567e69..b1f0699d01 100644
    metadata_in.interactive_content = true;
  
    // base::UnguessableTokens
-@@ -191,6 +192,7 @@ TEST_F(VideoFrameMetadataStructTraitsTest, ValidMetadata) {
+@@ -191,6 +192,7 @@
    EXPECT_EQ(metadata_in.power_efficient, metadata_out.power_efficient);
    EXPECT_EQ(metadata_in.read_lock_fences_enabled,
              metadata_out.read_lock_fences_enabled);
@@ -3276,10 +3198,9 @@ index a6f4567e69..b1f0699d01 100644
    EXPECT_EQ(metadata_in.tracking_token, metadata_out.tracking_token);
    EXPECT_EQ(metadata_in.device_scale_factor, metadata_out.device_scale_factor);
 diff --git a/media/renderers/BUILD.gn b/media/renderers/BUILD.gn
-index 1a15973d0a..237dd2ddad 100644
 --- a/media/renderers/BUILD.gn
 +++ b/media/renderers/BUILD.gn
-@@ -11,6 +11,11 @@ source_set("renderers") {
+@@ -11,6 +11,11 @@
    visibility = [ "//media" ]
  
    sources = [
@@ -3291,7 +3212,7 @@ index 1a15973d0a..237dd2ddad 100644
      "audio_renderer_impl.cc",
      "audio_renderer_impl.h",
      "decrypting_renderer.cc",
-@@ -56,6 +61,7 @@ source_set("renderers") {
+@@ -56,6 +61,7 @@
      "//media/base",
      "//media/filters",
      "//media/video",
@@ -3299,7 +3220,7 @@ index 1a15973d0a..237dd2ddad 100644
      "//third_party/fp16",
      "//third_party/libyuv",
      "//ui/gfx:memory_buffer",
-@@ -123,6 +129,8 @@ static_library("test_support") {
+@@ -123,6 +129,8 @@
  source_set("unit_tests") {
    testonly = true
    sources = [
@@ -3308,7 +3229,7 @@ index 1a15973d0a..237dd2ddad 100644
      "audio_renderer_impl_unittest.cc",
      "decrypting_renderer_unittest.cc",
      "paint_canvas_video_renderer_unittest.cc",
-@@ -133,6 +141,10 @@ source_set("unit_tests") {
+@@ -133,6 +141,10 @@
    ]
    configs += [ "//media:media_config" ]
    deps = [
@@ -3613,7 +3534,6 @@ new file mode 100644
 +}  // namespace media
 diff --git a/media/renderers/nvidia_vsr_frame_client.h b/media/renderers/nvidia_vsr_frame_client.h
 new file mode 100644
-index 0000000000..a90a95e572
 --- /dev/null
 +++ b/media/renderers/nvidia_vsr_frame_client.h
 @@ -0,0 +1,77 @@
@@ -3696,7 +3616,6 @@ index 0000000000..a90a95e572
 +#endif
 diff --git a/media/renderers/nvidia_vsr_frame_client_unittest.cc b/media/renderers/nvidia_vsr_frame_client_unittest.cc
 new file mode 100644
-index 0000000000..7fa3133675
 --- /dev/null
 +++ b/media/renderers/nvidia_vsr_frame_client_unittest.cc
 @@ -0,0 +1,396 @@
@@ -4098,7 +4017,6 @@ index 0000000000..7fa3133675
 +}  // namespace media
 diff --git a/media/renderers/nvidia_vsr_presentation_cache.h b/media/renderers/nvidia_vsr_presentation_cache.h
 new file mode 100644
-index 0000000000..af24c23b27
 --- /dev/null
 +++ b/media/renderers/nvidia_vsr_presentation_cache.h
 @@ -0,0 +1,14 @@
@@ -4118,7 +4036,6 @@ index 0000000000..af24c23b27
 +#endif
 diff --git a/media/renderers/nvidia_vsr_presentation_cache_unittest.cc b/media/renderers/nvidia_vsr_presentation_cache_unittest.cc
 new file mode 100644
-index 0000000000..e36d397d95
 --- /dev/null
 +++ b/media/renderers/nvidia_vsr_presentation_cache_unittest.cc
 @@ -0,0 +1,323 @@
@@ -4447,7 +4364,6 @@ index 0000000000..e36d397d95
 +}  // namespace media
 diff --git a/media/renderers/nvidia_vsr_source_release.cc b/media/renderers/nvidia_vsr_source_release.cc
 new file mode 100644
-index 0000000000..3aceeba38c
 --- /dev/null
 +++ b/media/renderers/nvidia_vsr_source_release.cc
 @@ -0,0 +1,18 @@
@@ -4471,7 +4387,6 @@ index 0000000000..3aceeba38c
 +}  // namespace media
 diff --git a/media/renderers/nvidia_vsr_source_release.h b/media/renderers/nvidia_vsr_source_release.h
 new file mode 100644
-index 0000000000..0e31d020b1
 --- /dev/null
 +++ b/media/renderers/nvidia_vsr_source_release.h
 @@ -0,0 +1,33 @@
@@ -4509,10 +4424,9 @@ index 0000000000..0e31d020b1
 +}  // namespace media
 +#endif
 diff --git a/media/renderers/renderer_impl_factory.cc b/media/renderers/renderer_impl_factory.cc
-index 0682ed8402..7c9321b202 100644
 --- a/media/renderers/renderer_impl_factory.cc
 +++ b/media/renderers/renderer_impl_factory.cc
-@@ -128,7 +128,7 @@ std::unique_ptr<Renderer> RendererImplFactory::CreateRenderer(
+@@ -128,7 +128,7 @@
                            base::Unretained(this), media_task_runner,
                            std::move(request_overlay_info_cb),
                            target_color_space, gpu_factories),
@@ -4522,7 +4436,6 @@ index 0682ed8402..7c9321b202 100644
    return std::make_unique<RendererImpl>(
        media_task_runner, std::move(audio_renderer), std::move(video_renderer));
 diff --git a/media/renderers/video_renderer_impl.cc b/media/renderers/video_renderer_impl.cc
-index 576cc90a35..915dc4b295 100644
 --- a/media/renderers/video_renderer_impl.cc
 +++ b/media/renderers/video_renderer_impl.cc
 @@ -3,9 +3,11 @@
@@ -4546,7 +4459,7 @@ index 576cc90a35..915dc4b295 100644
  #include "third_party/perfetto/include/perfetto/tracing/track.h"
  
  namespace media {
-@@ -56,7 +60,7 @@ VideoRendererImpl::VideoRendererImpl(
+@@ -56,7 +60,7 @@
      bool drop_frames,
      MediaLog* media_log,
      std::unique_ptr<MappableSharedImageVideoFramePool> mappable_si_pool,
@@ -4555,7 +4468,7 @@ index 576cc90a35..915dc4b295 100644
      : task_runner_(media_task_runner),
        sink_(sink),
        sink_started_(false),
-@@ -73,6 +77,7 @@ VideoRendererImpl::VideoRendererImpl(
+@@ -73,6 +77,7 @@
        drop_frames_(drop_frames),
        buffering_state_(BUFFERING_HAVE_NOTHING),
        tick_clock_(base::DefaultTickClock::GetInstance()),
@@ -4563,7 +4476,7 @@ index 576cc90a35..915dc4b295 100644
        was_background_rendering_(false),
        time_progressing_(false),
        have_renderered_frames_(false),
-@@ -81,6 +86,10 @@ VideoRendererImpl::VideoRendererImpl(
+@@ -81,6 +86,10 @@
        min_buffered_frames_(initial_buffering_size_.value()),
        max_buffered_frames_(initial_buffering_size_.value()) {
    DCHECK(create_video_decoders_cb_);
@@ -4574,7 +4487,7 @@ index 576cc90a35..915dc4b295 100644
  }
  
  VideoRendererImpl::~VideoRendererImpl() {
-@@ -109,6 +118,9 @@ void VideoRendererImpl::Flush(base::OnceClosure callback) {
+@@ -109,6 +118,9 @@
    DCHECK_EQ(state_, kPlaying);
    flush_cb_ = std::move(callback);
    state_ = kFlushing;
@@ -4584,7 +4497,7 @@ index 576cc90a35..915dc4b295 100644
  
    if (buffering_state_ != BUFFERING_HAVE_NOTHING) {
      buffering_state_ = BUFFERING_HAVE_NOTHING;
-@@ -181,13 +193,26 @@ void VideoRendererImpl::Initialize(
+@@ -181,13 +193,26 @@
    DCHECK(!was_background_rendering_);
    DCHECK(!time_progressing_);
  
@@ -4613,7 +4526,7 @@ index 576cc90a35..915dc4b295 100644
    video_decoder_stream_->set_fallback_observer(base::BindRepeating(
        &VideoRendererImpl::OnFallback, weak_factory_.GetWeakPtr()));
    if (mappable_shared_image_pool_) {
-@@ -215,6 +240,7 @@ void VideoRendererImpl::Initialize(
+@@ -215,6 +240,7 @@
    state_ = kInitializing;
  
    current_decoder_config_ = demuxer_stream_->video_decoder_config();
@@ -4621,7 +4534,7 @@ index 576cc90a35..915dc4b295 100644
    DCHECK(current_decoder_config_.IsValidConfig());
  
    video_decoder_stream_->Initialize(
-@@ -292,6 +318,9 @@ scoped_refptr<VideoFrame> VideoRendererImpl::Render(
+@@ -292,6 +318,9 @@
                       result->natural_size()));
  
    TRACE_EVENT_END("media", "frame", result->AsHumanReadableString());
@@ -4631,7 +4544,7 @@ index 576cc90a35..915dc4b295 100644
    return result;
  }
  
-@@ -400,6 +429,10 @@ void VideoRendererImpl::OnConfigChange(const VideoDecoderConfig& config) {
+@@ -400,6 +429,10 @@
    // RendererClient only cares to know about config changes that differ from
    // previous configs.
    if (!current_decoder_config_.Matches(config)) {
@@ -4642,7 +4555,7 @@ index 576cc90a35..915dc4b295 100644
      current_decoder_config_ = config;
      client_->OnVideoConfigChange(config);
    }
-@@ -805,9 +838,172 @@ void VideoRendererImpl::AddReadyFrame_Locked(scoped_refptr<VideoFrame> frame) {
+@@ -805,7 +838,170 @@
    if (frame->metadata().power_efficient)
      ++stats_.video_frames_decoded_power_efficient;
  
@@ -4653,8 +4566,8 @@ index 576cc90a35..915dc4b295 100644
 +        &VideoRendererImpl::PumpNvidiaVsrFrames,weak_factory_.GetWeakPtr()));
 +  }
    algorithm_->EnqueueFrame(std::move(frame));
- }
- 
++}
++
 +scoped_refptr<VideoFrame> VideoRendererImpl::SelectNvidiaVsrFrame_Locked(
 +    scoped_refptr<VideoFrame> original) {
 +  lock_.AssertAcquired();
@@ -4810,12 +4723,10 @@ index 576cc90a35..915dc4b295 100644
 +            self->nvidia_vsr_encrypted_seen_,
 +            self->nvidia_vsr_cache_->generation());
 +      },base::Unretained(this)));
-+}
-+
+ }
+ 
  void VideoRendererImpl::AttemptRead_Locked() {
-   DCHECK(task_runner_->RunsTasksInCurrentSequence());
-   lock_.AssertAcquired();
-@@ -1107,6 +1303,9 @@ void VideoRendererImpl::PaintFirstFrame_Locked() {
+@@ -1107,6 +1303,9 @@
    auto first_frame =
        algorithm_->Render(base::TimeTicks(), base::TimeTicks(), nullptr);
    DCHECK(first_frame);
@@ -4826,7 +4737,6 @@ index 576cc90a35..915dc4b295 100644
    CheckForMetadataChanges(first_frame->format(), first_frame->natural_size());
    painted_first_frame_ = true;
 diff --git a/media/renderers/video_renderer_impl.h b/media/renderers/video_renderer_impl.h
-index 8ad331101c..d4b16b85a6 100644
 --- a/media/renderers/video_renderer_impl.h
 +++ b/media/renderers/video_renderer_impl.h
 @@ -9,6 +9,7 @@
@@ -4837,7 +4747,7 @@ index 8ad331101c..d4b16b85a6 100644
  
  #include "base/cancelable_callback.h"
  #include "base/memory/raw_ptr.h"
-@@ -42,6 +43,10 @@ class TickClock;
+@@ -42,6 +43,10 @@
  
  namespace media {
  
@@ -4848,7 +4758,7 @@ index 8ad331101c..d4b16b85a6 100644
  // VideoRendererImpl handles reading from a VideoDecoderStream storing the
  // results in a queue of decoded frames and executing a callback when a frame is
  // ready for rendering.
-@@ -63,7 +68,8 @@ class MEDIA_EXPORT VideoRendererImpl
+@@ -63,7 +68,8 @@
        bool drop_frames,
        MediaLog* media_log,
        std::unique_ptr<MappableSharedImageVideoFramePool> mappable_si_pool,
@@ -4858,7 +4768,7 @@ index 8ad331101c..d4b16b85a6 100644
  
    VideoRendererImpl(const VideoRendererImpl&) = delete;
    VideoRendererImpl& operator=(const VideoRendererImpl&) = delete;
-@@ -100,6 +106,8 @@ class MEDIA_EXPORT VideoRendererImpl
+@@ -100,6 +106,8 @@
    base::TimeDelta GetPreferredRenderInterval() override;
  
   private:
@@ -4867,7 +4777,7 @@ index 8ad331101c..d4b16b85a6 100644
    // Callback for |video_decoder_stream_| initialization.
    void OnVideoDecoderStreamInitialized(bool success);
  
-@@ -127,6 +135,16 @@ class MEDIA_EXPORT VideoRendererImpl
+@@ -127,6 +135,16 @@
  
    // Helper method for enqueueing a frame to |alogorithm_|.
    void AddReadyFrame_Locked(scoped_refptr<VideoFrame> frame);
@@ -4884,7 +4794,7 @@ index 8ad331101c..d4b16b85a6 100644
  
    // Helper method that schedules an asynchronous read from the
    // |video_decoder_stream_| as long as there isn't a pending read and we have
-@@ -319,6 +337,29 @@ class MEDIA_EXPORT VideoRendererImpl
+@@ -319,6 +337,29 @@
    // |mappable_shared_image_pool_| for optimal memory release when a frames are
    // still held by the compositor.
    std::unique_ptr<VideoRendererAlgorithm> algorithm_;
@@ -4915,7 +4825,6 @@ index 8ad331101c..d4b16b85a6 100644
    // Indicates that Render() was called with |background_rendering| set to true,
    // so we've entered a background rendering mode where dropped frames are not
 diff --git a/sandbox/policy/linux/bpf_gpu_policy_linux.cc b/sandbox/policy/linux/bpf_gpu_policy_linux.cc
-index 5725da248d..e0aa610445 100644
 --- a/sandbox/policy/linux/bpf_gpu_policy_linux.cc
 +++ b/sandbox/policy/linux/bpf_gpu_policy_linux.cc
 @@ -6,6 +6,7 @@
@@ -4926,7 +4835,7 @@ index 5725da248d..e0aa610445 100644
  #include <sys/socket.h>
  #include <sys/types.h>
  #include <unistd.h>
-@@ -102,6 +103,11 @@ ResultExpr GpuProcessPolicy::EvaluateSyscall(int sysno) const {
+@@ -102,6 +103,11 @@
      case __NR_sysinfo:
      case __NR_uname:  // https://crbug.com/1075934
        return Allow();
@@ -4939,10 +4848,9 @@ index 5725da248d..e0aa610445 100644
        return RestrictSchedTarget(GetPolicyPid(), sysno);
      case __NR_prlimit64:
 diff --git a/third_party/blink/renderer/core/html/media/html_video_element.cc b/third_party/blink/renderer/core/html/media/html_video_element.cc
-index e07540f7b2..2061dcda96 100644
 --- a/third_party/blink/renderer/core/html/media/html_video_element.cc
 +++ b/third_party/blink/renderer/core/html/media/html_video_element.cc
-@@ -1068,7 +1068,11 @@ WebMediaPlayer::DisplayType HTMLVideoElement::GetDisplayType() const {
+@@ -1068,7 +1068,11 @@
      return WebMediaPlayer::DisplayType::kDocumentPictureInPicture;
    }
  
@@ -4956,10 +4864,9 @@ index e07540f7b2..2061dcda96 100644
    }
  
 diff --git a/third_party/blink/renderer/platform/media/video_frame_compositor.cc b/third_party/blink/renderer/platform/media/video_frame_compositor.cc
-index b1176370af..8274b2c6ea 100644
 --- a/third_party/blink/renderer/platform/media/video_frame_compositor.cc
 +++ b/third_party/blink/renderer/platform/media/video_frame_compositor.cc
-@@ -82,6 +82,45 @@ void VideoFrameCompositor::InitializeSubmitter() {
+@@ -82,6 +82,45 @@
    submitter_->Initialize(this, /* is_media_stream = */ false);
  }
  
@@ -5006,7 +4913,6 @@ index b1176370af..8274b2c6ea 100644
    DCHECK(task_runner_->BelongsToCurrentThread());
    DCHECK(!callback_);
 diff --git a/third_party/blink/renderer/platform/media/video_frame_compositor.h b/third_party/blink/renderer/platform/media/video_frame_compositor.h
-index 1370cf7bb6..66b37c5400 100644
 --- a/third_party/blink/renderer/platform/media/video_frame_compositor.h
 +++ b/third_party/blink/renderer/platform/media/video_frame_compositor.h
 @@ -5,6 +5,7 @@
@@ -5017,7 +4923,7 @@ index 1370cf7bb6..66b37c5400 100644
  #include <utility>
  
  #include "base/functional/callback.h"
-@@ -118,6 +119,13 @@ class PLATFORM_EXPORT VideoFrameCompositor : public media::VideoRendererSink,
+@@ -118,6 +119,13 @@
    // Can be called from any thread.
    virtual scoped_refptr<media::VideoFrame> GetCurrentFrameOnAnyThread();
  
@@ -5031,7 +4937,7 @@ index 1370cf7bb6..66b37c5400 100644
    // media::VideoRendererSink implementation. These methods must be called from
    // the same thread (typically the media thread).
    void Start(RenderCallback* callback) override;
-@@ -287,6 +295,11 @@ class PLATFORM_EXPORT VideoFrameCompositor : public media::VideoRendererSink,
+@@ -287,6 +295,11 @@
  
    std::unique_ptr<WebVideoFrameSubmitter> submitter_;
  
@@ -5044,10 +4950,9 @@ index 1370cf7bb6..66b37c5400 100644
  };
  
 diff --git a/third_party/blink/renderer/platform/media/web_media_player_impl.cc b/third_party/blink/renderer/platform/media/web_media_player_impl.cc
-index 839bcbcfe7..753c6fa9e3 100644
 --- a/third_party/blink/renderer/platform/media/web_media_player_impl.cc
 +++ b/third_party/blink/renderer/platform/media/web_media_player_impl.cc
-@@ -819,6 +819,7 @@ void WebMediaPlayerImpl::EnteredFullscreen() {
+@@ -819,6 +819,7 @@
  }
  
  void WebMediaPlayerImpl::ExitedFullscreen() {
@@ -5055,7 +4960,7 @@ index 839bcbcfe7..753c6fa9e3 100644
    overlay_info_.is_fullscreen = false;
  
    // If we're in overlay mode, then exit it unless we're supposed to allow
-@@ -865,6 +866,8 @@ void WebMediaPlayerImpl::OnHasNativeControlsChanged(bool has_native_controls) {
+@@ -865,6 +866,8 @@
  
  void WebMediaPlayerImpl::OnDisplayTypeChanged(
      WebMediaPlayer::DisplayType display_type) {
@@ -5066,7 +4971,6 @@ index 839bcbcfe7..753c6fa9e3 100644
    if (surface_layer_for_video_enabled_) {
 diff --git a/third_party/nvidia_vsr/BUILD.gn b/third_party/nvidia_vsr/BUILD.gn
 new file mode 100644
-index 0000000000..52fcc5572e
 --- /dev/null
 +++ b/third_party/nvidia_vsr/BUILD.gn
 @@ -0,0 +1,49 @@
@@ -5121,7 +5025,6 @@ index 0000000000..52fcc5572e
 +}
 diff --git a/third_party/nvidia_vsr/features.gni b/third_party/nvidia_vsr/features.gni
 new file mode 100644
-index 0000000000..872b978a63
 --- /dev/null
 +++ b/third_party/nvidia_vsr/features.gni
 @@ -0,0 +1,4 @@
@@ -5131,7 +5034,6 @@ index 0000000000..872b978a63
 +}
 diff --git a/third_party/nvidia_vsr/include/nvvfx_vsr/dimensions.h b/third_party/nvidia_vsr/include/nvvfx_vsr/dimensions.h
 new file mode 100644
-index 0000000000..26bffd69f1
 --- /dev/null
 +++ b/third_party/nvidia_vsr/include/nvvfx_vsr/dimensions.h
 @@ -0,0 +1,7 @@
@@ -5144,7 +5046,6 @@ index 0000000000..26bffd69f1
 +}
 diff --git a/third_party/nvidia_vsr/include/nvvfx_vsr/frame_eligibility.h b/third_party/nvidia_vsr/include/nvvfx_vsr/frame_eligibility.h
 new file mode 100644
-index 0000000000..30788c8169
 --- /dev/null
 +++ b/third_party/nvidia_vsr/include/nvvfx_vsr/frame_eligibility.h
 @@ -0,0 +1,23 @@
@@ -5173,7 +5074,6 @@ index 0000000000..30788c8169
 +}
 diff --git a/third_party/nvidia_vsr/include/nvvfx_vsr/gl_bridge.h b/third_party/nvidia_vsr/include/nvvfx_vsr/gl_bridge.h
 new file mode 100644
-index 0000000000..d021f41429
 --- /dev/null
 +++ b/third_party/nvidia_vsr/include/nvvfx_vsr/gl_bridge.h
 @@ -0,0 +1,21 @@
@@ -5200,7 +5100,6 @@ index 0000000000..d021f41429
 +}
 diff --git a/third_party/nvidia_vsr/include/nvvfx_vsr/job_admission.h b/third_party/nvidia_vsr/include/nvvfx_vsr/job_admission.h
 new file mode 100644
-index 0000000000..ea1ac74046
 --- /dev/null
 +++ b/third_party/nvidia_vsr/include/nvvfx_vsr/job_admission.h
 @@ -0,0 +1,32 @@
@@ -5238,7 +5137,6 @@ index 0000000000..ea1ac74046
 +}
 diff --git a/third_party/nvidia_vsr/include/nvvfx_vsr/presentation_cache.h b/third_party/nvidia_vsr/include/nvvfx_vsr/presentation_cache.h
 new file mode 100644
-index 0000000000..2f5dd1d60a
 --- /dev/null
 +++ b/third_party/nvidia_vsr/include/nvvfx_vsr/presentation_cache.h
 @@ -0,0 +1,80 @@
@@ -5352,7 +5250,6 @@ new file mode 100644
 +}
 diff --git a/third_party/nvidia_vsr/include/nvvfx_vsr/vsr_processor.h b/third_party/nvidia_vsr/include/nvvfx_vsr/vsr_processor.h
 new file mode 100644
-index 0000000000..870c464ca9
 --- /dev/null
 +++ b/third_party/nvidia_vsr/include/nvvfx_vsr/vsr_processor.h
 @@ -0,0 +1,37 @@
@@ -5395,7 +5292,6 @@ index 0000000000..870c464ca9
 +}
 diff --git a/third_party/nvidia_vsr/src/frame_eligibility.cpp b/third_party/nvidia_vsr/src/frame_eligibility.cpp
 new file mode 100644
-index 0000000000..8a1c7b8a2e
 --- /dev/null
 +++ b/third_party/nvidia_vsr/src/frame_eligibility.cpp
 @@ -0,0 +1,15 @@
@@ -5416,7 +5312,6 @@ index 0000000000..8a1c7b8a2e
 +}
 diff --git a/third_party/nvidia_vsr/src/gl_bridge.cpp b/third_party/nvidia_vsr/src/gl_bridge.cpp
 new file mode 100644
-index 0000000000..4a9dfda48e
 --- /dev/null
 +++ b/third_party/nvidia_vsr/src/gl_bridge.cpp
 @@ -0,0 +1,168 @@
@@ -5590,7 +5485,6 @@ index 0000000000..4a9dfda48e
 +}
 diff --git a/third_party/nvidia_vsr/src/image_descriptor.c b/third_party/nvidia_vsr/src/image_descriptor.c
 new file mode 100644
-index 0000000000..70de18dad2
 --- /dev/null
 +++ b/third_party/nvidia_vsr/src/image_descriptor.c
 @@ -0,0 +1,5 @@
@@ -5601,7 +5495,6 @@ index 0000000000..70de18dad2
 +void nvvfx_free_image_descriptor(NvCVImage* image) { free(image); }
 diff --git a/third_party/nvidia_vsr/src/job_admission.cpp b/third_party/nvidia_vsr/src/job_admission.cpp
 new file mode 100644
-index 0000000000..b7974d5856
 --- /dev/null
 +++ b/third_party/nvidia_vsr/src/job_admission.cpp
 @@ -0,0 +1,44 @@
@@ -5653,7 +5546,7 @@ diff --git a/third_party/nvidia_vsr/src/processor_config.cpp b/third_party/nvidi
 new file mode 100644
 --- /dev/null
 +++ b/third_party/nvidia_vsr/src/processor_config.cpp
-@@ -0,0 +1,74 @@
+@@ -0,0 +1,78 @@
 +#include "nvvfx_vsr/processor_config.h"
 +#include <algorithm>
 +#include <cmath>
@@ -5711,7 +5604,11 @@ new file mode 100644
 +  if(target_height != -1 && target_height != 1080 && target_height != 1440 &&
 +     target_height != 2160) return std::nullopt;
 +  if(input.width>4096 || input.height>2160) return std::nullopt;
-+  if(input.width>1920 || input.height>1080) return select(input);
++  if(input.width>1920 || input.height>1080) {
++    auto config = select(input);
++    if(config) config->quality = 8;  // Bound the cost of native 1440p/4K denoise.
++    return config;
++  }
 +  if(target_height != -1) {
 +    if(target_height != 1080 && target_height != 1440 && target_height != 2160)
 +      return std::nullopt;
@@ -6032,7 +5929,6 @@ new file mode 100644
 +float VsrProcessor::LastGpuMilliseconds() const {return impl_->last_ms;}
 +}
 diff --git a/ui/gl/gl_features.cc b/ui/gl/gl_features.cc
-index 99bfd69948..824ee999d2 100644
 --- a/ui/gl/gl_features.cc
 +++ b/ui/gl/gl_features.cc
 @@ -35,6 +35,9 @@
@@ -6046,22 +5942,20 @@ index 99bfd69948..824ee999d2 100644
  
  #if BUILDFLAG(IS_ANDROID)
 diff --git a/ui/gl/gl_features.h b/ui/gl/gl_features.h
-index 9939e05487..756ca9f380 100644
 --- a/ui/gl/gl_features.h
 +++ b/ui/gl/gl_features.h
-@@ -15,6 +15,10 @@
+@@ -14,6 +14,10 @@
+ #include "ui/gl/gl_export.h"
  
  namespace features {
- 
++
 +// Experimental native NVIDIA EGL/CUDA video processing; opt-in only.
 +GL_EXPORT BASE_DECLARE_FEATURE(kNvidiaVideoSuperResolution);
 +GL_EXPORT BASE_DECLARE_FEATURE(kNvidiaVsrNativeEgl);
-+
+ 
  // Controls if GPU should synchronize presentation with vsync.
  GL_EXPORT bool UseGpuVsync();
- 
 diff --git a/ui/ozone/platform/wayland/gpu/wayland_surface_factory.cc b/ui/ozone/platform/wayland/gpu/wayland_surface_factory.cc
-index 2605b0e267..b457307cc1 100644
 --- a/ui/ozone/platform/wayland/gpu/wayland_surface_factory.cc
 +++ b/ui/ozone/platform/wayland/gpu/wayland_surface_factory.cc
 @@ -12,6 +12,7 @@
@@ -6072,7 +5966,7 @@ index 2605b0e267..b457307cc1 100644
  #include "ui/gl/gl_surface_egl.h"
  #include "ui/gl/presenter.h"
  #include "ui/ozone/common/egl_util.h"
-@@ -227,6 +228,11 @@ WaylandSurfaceFactory::GetAllowedGLImplementations() {
+@@ -227,6 +228,11 @@
      impls.emplace_back(gl::ANGLEImplementation::kOpenGLES);
      impls.emplace_back(gl::ANGLEImplementation::kSwiftShader);
      impls.emplace_back(gl::ANGLEImplementation::kVulkan);
@@ -6085,7 +5979,6 @@ index 2605b0e267..b457307cc1 100644
    return impls;
  }
 diff --git a/ui/ozone/platform/x11/x11_surface_factory.cc b/ui/ozone/platform/x11/x11_surface_factory.cc
-index 07dd8200a4..8c8cbbc0a9 100644
 --- a/ui/ozone/platform/x11/x11_surface_factory.cc
 +++ b/ui/ozone/platform/x11/x11_surface_factory.cc
 @@ -5,6 +5,8 @@
@@ -6097,10 +5990,11 @@ index 07dd8200a4..8c8cbbc0a9 100644
  
  #include "components/viz/common/resources/shared_image_format_utils.h"
  #include "gpu/vulkan/buildflags.h"
-@@ -29,6 +31,15 @@
+@@ -28,6 +30,15 @@
+ 
  namespace ui {
  namespace {
- 
++
 +// Opt in to the same native EGL backend for VSR and baseline measurements.
 +// This leaves inference disabled unless NvidiaVideoSuperResolution is enabled.
 +BASE_FEATURE(kNvidiaVsrNativeEgl, base::FEATURE_DISABLED_BY_DEFAULT);
@@ -6109,11 +6003,10 @@ index 07dd8200a4..8c8cbbc0a9 100644
 +  return base::FeatureList::IsEnabled(kNvidiaVsrNativeEgl) ||
 +         base::FeatureList::IsEnabled(features::kNvidiaVideoSuperResolution);
 +}
-+
+ 
  enum class NativePixmapSupportType {
    // Importing native pixmaps not supported.
-   kNone,
-@@ -174,14 +185,20 @@ X11SurfaceFactory::~X11SurfaceFactory() = default;
+@@ -174,14 +185,20 @@
  
  std::vector<gl::GLImplementationParts>
  X11SurfaceFactory::GetAllowedGLImplementations() {

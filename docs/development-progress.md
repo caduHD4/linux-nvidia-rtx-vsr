@@ -494,3 +494,25 @@ and local-build updates.
 
 1080p30 → 4K upscale regression also passed continuity and fullscreen exit
 (480 selected enhanced frames): port/validation/vsr-1791417679579979250.
+
+
+## 2026-10-07 — Fixed Low denoise above 1080p and simplified settings
+
+Following on-host comparison of native 4K Low (~44% GPU, 48 W) and Ultra
+(~94% GPU, 213 W), the user chose fixed Low denoise above 1080p and removal of
+the denoise selector. Sources above 1920x1080 through 4096x2160 now force SDK
+mode 8 in core selection, independently of the previous denoise preference.
+Brave no longer registers, exposes or reads that preference. Native processing
+at or below 1080p remains Ultra; upscaling remains VSR Ultra. The settings panel
+retains target, sharpness and Restore defaults (2160/35), with restart semantics.
+
+The new core policy test failed before implementation and passed afterward.
+Python 51/51 passed. Complete/reverse patch checks and migrations from c797aee,
+1fa419a, 3a23bc7 and 6889b9a passed. Independent review found no important issue.
+UI/resource build passed in 47.31s / 18 steps; the final allowlist update passed
+in 7.43s / 3 steps. A new installable preview.2 is prepared separately from the
+unchanged preview.1; runtime/package evidence follows after validation.
+
+UI automation passed selector absence, target/sharpness save and reset across
+relaunches, plus renderer/GPU consistency with an old Low preference present.
+Report: validation/brave-low-denoise-ui-report.json on the build host.

@@ -32,7 +32,7 @@ int main() {
     Check(portrait && portrait->output.width==810 && portrait->output.height==1440,
           "1440p must preserve portrait aspect");
     auto higher=SelectBrowserProcessorConfig({2560,1440});
-    Check(higher && higher->quality==11 && higher->output.width==2560 && higher->output.height==1440,
+    Check(higher && higher->quality==8 && higher->output.width==2560 && higher->output.height==1440,
           "1440p source must denoise at native resolution");
     for(const char* setting:{"1080","invalid","4320"}) {
       setenv("NVVFX_VSR_TARGET_HEIGHT",setting,1);
@@ -51,10 +51,10 @@ int main() {
       Check(!SelectBrowserProcessorConfig({1280,720},invalid),"invalid explicit quality must bypass");
     for(int target:{1080,1440,2160}) {
       for(Dimensions input:{Dimensions{2560,1440},Dimensions{3840,2160},Dimensions{4096,2160}}) {
-        auto native_high=SelectBrowserProcessorConfig(input,target,8,0.65F);
+        auto native_high=SelectBrowserProcessorConfig(input,target,11,0.65F);
         Check(native_high && native_high->quality==8 && native_high->output.width==input.width &&
               native_high->output.height==input.height && native_high->sharpness==0.65F,
-              "high-resolution source must keep native dimensions and image settings");
+              "high-resolution source must force Low and keep native dimensions and sharpness");
       }
     }
     Check(!SelectBrowserProcessorConfig({3840,2160},0),"Off must bypass high-resolution denoise");

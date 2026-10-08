@@ -1,7 +1,7 @@
 diff --git a/brave/browser/brave_content_browser_client.cc b/brave/browser/brave_content_browser_client.cc
 --- a/brave/browser/brave_content_browser_client.cc
 +++ b/brave/browser/brave_content_browser_client.cc
-@@ -1146,6 +1146,24 @@
+@@ -1146,6 +1146,20 @@
      return height == 1080 || height == 1440 || height == 2160 ? height : 0;
    }();
    command_line->AppendSwitchASCII("nvidia-vsr-target-height", base::NumberToString(vsr_target_height));
@@ -16,12 +16,8 @@ diff --git a/brave/browser/brave_content_browser_client.cc b/brave/browser/brave
 +    int value = prefs->GetInteger("brave.nvidia_vsr_sharpness");
 +    return value >= 0 && value <= 100 ? value : -2;
 +  }();
-+  static const int vsr_denoise = [] {
-+    int value = g_browser_process->local_state()->GetInteger("brave.nvidia_vsr_denoise");
-+    return value >= 8 && value <= 11 ? value : -2;
-+  }();
 +  command_line->AppendSwitchASCII("nvidia-vsr-sharpness", base::NumberToString(vsr_sharpness));
-+  command_line->AppendSwitchASCII("nvidia-vsr-denoise", base::NumberToString(vsr_denoise));
++  command_line->AppendSwitchASCII("nvidia-vsr-denoise", "11");
 +
    }
  #endif
@@ -29,31 +25,29 @@ diff --git a/brave/browser/brave_content_browser_client.cc b/brave/browser/brave
 diff --git a/brave/browser/brave_local_state_prefs.cc b/brave/browser/brave_local_state_prefs.cc
 --- a/brave/browser/brave_local_state_prefs.cc
 +++ b/brave/browser/brave_local_state_prefs.cc
-@@ -172,6 +172,8 @@
+@@ -172,6 +172,7 @@
  void RegisterLocalStatePrefs(PrefRegistrySimple* registry) {
  #if BUILDFLAG(IS_LINUX)
    registry->RegisterIntegerPref("brave.nvidia_vsr_target_height", 2160);
 +  registry->RegisterIntegerPref("brave.nvidia_vsr_sharpness", 35);
-+  registry->RegisterIntegerPref("brave.nvidia_vsr_denoise", 11);
  #endif
    brave_shields::RegisterPrefsForAdBlockService(registry);
    // `kStatsReportingEnabled` is the user/policy-facing opt-in for anonymous
 diff --git a/brave/browser/extensions/api/settings_private/brave_prefs_util.cc b/brave/browser/extensions/api/settings_private/brave_prefs_util.cc
 --- a/brave/browser/extensions/api/settings_private/brave_prefs_util.cc
 +++ b/brave/browser/extensions/api/settings_private/brave_prefs_util.cc
-@@ -120,6 +120,8 @@
+@@ -120,6 +120,7 @@
    s_brave_allowlist->insert(chromium_prefs.begin(), chromium_prefs.end());
  #if BUILDFLAG(IS_LINUX)
    (*s_brave_allowlist)["brave.nvidia_vsr_target_height"] = settings_api::PrefType::kNumber;
 +  (*s_brave_allowlist)["brave.nvidia_vsr_sharpness"] = settings_api::PrefType::kNumber;
-+  (*s_brave_allowlist)["brave.nvidia_vsr_denoise"] = settings_api::PrefType::kNumber;
  #endif
    // Add Brave values to the allowlist
    // import data
 diff --git a/brave/chromium_src/chrome/browser/resources/settings/system_page/system_page.html.ts.lit_mangler.ts b/brave/chromium_src/chrome/browser/resources/settings/system_page/system_page.html.ts.lit_mangler.ts
 --- a/brave/chromium_src/chrome/browser/resources/settings/system_page/system_page.html.ts.lit_mangler.ts
 +++ b/brave/chromium_src/chrome/browser/resources/settings/system_page/system_page.html.ts.lit_mangler.ts
-@@ -42,13 +42,36 @@
+@@ -42,13 +42,28 @@
           <div role="status">\${this.vsrError_}</div>
         </div>
         <select id="nvidiaVsrQuality" aria-label="RTX Video Super Resolution quality"
@@ -78,15 +72,7 @@ diff --git a/brave/chromium_src/chrome/browser/resources/settings/system_page/sy
 +       <span>\${this.vsrSharpness_}%</span>
 +     </div>
 +     <div class="settings-box" ?hidden="\${!this.vsrIsLinux_}">
-+       <div class="start"><label for="nvidiaVsrDenoise">Native-resolution denoise</label>
-+         <div class="secondary">Applies when video is not upscaled. Upscaling uses VSR Ultra.</div></div>
-+       <select id="nvidiaVsrDenoise" aria-label="Native-resolution denoise level"
-+           ?disabled="\${!this.vsrLoaded_ || this.vsrSaving_}" @change="\${this.onVsrDenoiseChange_}">
-+         <option value="8" ?selected="\${this.vsrDenoise_ === 8}">Low</option>
-+         <option value="9" ?selected="\${this.vsrDenoise_ === 9}">Medium</option>
-+         <option value="10" ?selected="\${this.vsrDenoise_ === 10}">High</option>
-+         <option value="11" ?selected="\${this.vsrDenoise_ === 11}">Ultra</option>
-+       </select>
++       <div class="start"><div class="secondary">Videos above 1080p use Low denoise at their original resolution.</div></div>
 +       <cr-button id="nvidiaVsrReset" ?disabled="\${!this.vsrLoaded_ || this.vsrSaving_}"
 +           @click="\${this.onVsrResetClick_}">Restore defaults</cr-button>
       </div>`)
@@ -95,42 +81,38 @@ diff --git a/brave/chromium_src/chrome/browser/resources/settings/system_page/sy
 diff --git a/brave/chromium_src/chrome/browser/resources/settings/system_page/system_page.ts b/brave/chromium_src/chrome/browser/resources/settings/system_page/system_page.ts
 --- a/brave/chromium_src/chrome/browser/resources/settings/system_page/system_page.ts
 +++ b/brave/chromium_src/chrome/browser/resources/settings/system_page/system_page.ts
-@@ -18,6 +18,14 @@
+@@ -18,6 +18,12 @@
  // via the upstream system_page.html.ts import) type-checks.
  declare module './system_page-chromium.js' {
    interface SettingsSystemPageElement {
 +    loadVsrSettings_(): Promise<void>
 +    saveVsrSettings_(values: Array<[string, number]>): Promise<void>
 +    vsrSharpness_: number
-+    vsrDenoise_: number
 +    vsrSaving_: boolean
 +    onVsrSharpnessChange_(event: Event): Promise<void>
-+    onVsrDenoiseChange_(event: Event): Promise<void>
 +    onVsrResetClick_(): Promise<void>
      vsrTargetHeight_: number
      vsrLoaded_: boolean
      vsrIsLinux_: boolean
-@@ -34,6 +42,9 @@
+@@ -34,6 +40,8 @@
    static override get properties() {
      return {
        ...super.properties,
 +      vsrSharpness_: { type: Number },
-+      vsrDenoise_: { type: Number },
 +      vsrSaving_: { type: Boolean },
        vsrTargetHeight_: { type: Number },
        vsrLoaded_: { type: Boolean },
        vsrIsLinux_: { type: Boolean },
-@@ -44,6 +55,9 @@
+@@ -44,6 +52,8 @@
      }
    }
  
 +  override accessor vsrSharpness_: number = 35
-+  override accessor vsrDenoise_: number = 11
 +  override accessor vsrSaving_: boolean = false
    override accessor vsrTargetHeight_: number = 2160
    override accessor vsrLoaded_: boolean = false
    override accessor vsrIsLinux_: boolean = isLinux
-@@ -52,25 +66,70 @@
+@@ -52,25 +62,60 @@
    override connectedCallback() {
      super.connectedCallback()
      if (isLinux) {
@@ -145,14 +127,12 @@ diff --git a/brave/chromium_src/chrome/browser/resources/settings/system_page/sy
 +  }
 +
 +  override async loadVsrSettings_() {
-+    const [target, sharpness, denoise] = await Promise.all([
++    const [target, sharpness] = await Promise.all([
 +      chrome.settingsPrivate.getPref('brave.nvidia_vsr_target_height'),
 +      chrome.settingsPrivate.getPref('brave.nvidia_vsr_sharpness'),
-+      chrome.settingsPrivate.getPref('brave.nvidia_vsr_denoise'),
 +    ])
 +    this.vsrTargetHeight_ = Number(target.value)
 +    this.vsrSharpness_ = Number(sharpness.value)
-+    this.vsrDenoise_ = Number(denoise.value)
 +    this.vsrLoaded_ = true
 +  }
 +
@@ -199,18 +179,10 @@ diff --git a/brave/chromium_src/chrome/browser/resources/settings/system_page/sy
 +    }
 +  }
 +
-+  override async onVsrDenoiseChange_(event: Event) {
-+    const value = Number((event.target as HTMLSelectElement).value)
-+    if ([8, 9, 10, 11].includes(value)) {
-+      await this.saveVsrSettings_([['brave.nvidia_vsr_denoise', value]])
-+    }
-+  }
-+
 +  override async onVsrResetClick_() {
 +    await this.saveVsrSettings_([
 +      ['brave.nvidia_vsr_target_height', 2160],
 +      ['brave.nvidia_vsr_sharpness', 35],
-+      ['brave.nvidia_vsr_denoise', 11],
 +    ])
    }
  
@@ -344,7 +316,7 @@ diff --git a/third_party/nvidia_vsr/src/processor_config.cpp b/third_party/nvidi
                               c.input.height == c.output.height;
    return c.quality == 4 && c.output.width > c.input.width &&
                            c.output.height > c.input.height;
-@@ -38,22 +39,36 @@
+@@ -38,22 +39,40 @@
    return normalized;
  }
  
@@ -367,7 +339,11 @@ diff --git a/third_party/nvidia_vsr/src/processor_config.cpp b/third_party/nvidi
 +  if(target_height != -1 && target_height != 1080 && target_height != 1440 &&
 +     target_height != 2160) return std::nullopt;
 +  if(input.width>4096 || input.height>2160) return std::nullopt;
-+  if(input.width>1920 || input.height>1080) return select(input);
++  if(input.width>1920 || input.height>1080) {
++    auto config = select(input);
++    if(config) config->quality = 8;  // Bound the cost of native 1440p/4K denoise.
++    return config;
++  }
    if(target_height != -1) {
      if(target_height != 1080 && target_height != 1440 && target_height != 2160)
        return std::nullopt;

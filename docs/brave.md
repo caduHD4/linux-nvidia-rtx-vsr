@@ -93,7 +93,7 @@ active remains unvalidated. Selection events are sampled every120 frames, so
 the exit check is a regression signal rather than exact per-frame measurement.
 The executable identifies as `Brave Browser Development 154.1.96.0`.
 
-## In-browser quality (source builds after the first preview)
+## In-browser quality (preview.2 and newer)
 
 Open **Settings → System** (`brave://settings/system`) and choose **Off**, **1080p**,
 **1440p**, or **4K** under **RTX Video Super Resolution**. Click **Restart Brave**
@@ -107,16 +107,14 @@ selector; its installer still chooses the preset through `--target`.
 
 ### Image controls
 
-The same panel includes **Sharpness** (0–100; default 35), **Native-resolution
-denoise** (Low, Medium, High, Ultra; default Ultra), and **Restore defaults**.
-Restore defaults saves 4K / 35 / Ultra; click **Restart Brave** to apply.
-Sharpness 0 disables the extra sharpening pass. Denoise level applies only when
-input and output resolution match, such as 1080p video at the 1080p target.
-Upscaling keeps VSR Ultra; there is no separate denoise pass while upscaling.
-Sources above 1920×1080 and up to 4096×2160 receive the selected denoise at
-their original resolution, regardless of upscale target. Off disables all
-enhancement. HDR and protected video continue to bypass processing.
-These controls are available in source builds after the first binary preview.
+The same panel includes **Sharpness** (0–100; default 35) and **Restore defaults**.
+Restore defaults saves 4K / sharpness 35; click **Restart Brave** to apply.
+Sharpness 0 disables the extra sharpening pass. There is no denoise selector.
+Sources above 1920×1080 and up to 4096×2160 use Low denoise at their original
+resolution, regardless of upscale target. Native processing at or below 1080p
+uses Ultra denoise. Upscaling keeps VSR Ultra without an extra denoise pass.
+Off disables all enhancement. HDR and protected video bypass processing.
+Old denoise preferences are ignored.
 
 ## Updates
 

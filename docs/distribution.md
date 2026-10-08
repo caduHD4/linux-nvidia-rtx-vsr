@@ -18,6 +18,13 @@ python3 install.py --sdk "$HOME/.local/opt/nvidia-vfx/VideoFX"
 
 Open **Chromium RTX VSR (Experimental)** in the application menu. This uses a separate profile and does not replace your default browser. Select 4K (default), 1440p or 1080p with `--target 2160`, `--target 1440` or `--target 1080` when installing. Close the browser before changing its configuration. Processing runs only in fullscreen.
 
+For **Brave RTX VSR (Experimental)**, preview.2 and newer include resolution,
+sharpness and Restore defaults in **Settings → System**. Restart to apply.
+Videos above 1080p use Low denoise at native resolution (up to 4096×2160);
+upscaling uses VSR Ultra. Brave uses the separate `linux-nvidia-brave-vsr` app,
+configuration and profile names. To update, close the experimental Brave and run
+`install.py` from the newly extracted package; your browser profile is retained.
+
 SDK path and preset are stored in `$XDG_CONFIG_HOME/linux-nvidia-vsr/config.json` (default `~/.config`). `VFXSDK_ROOT` and `NVVFX_VSR_TARGET_HEIGHT` override them. `~/.local/bin/linux-nvidia-vsr --check` checks prerequisites; it does not prove playback/inference.
 
 Uninstall with `python3 ~/.local/share/linux-nvidia-vsr/install.py --uninstall` (adjust for custom XDG_DATA_HOME). The NVIDIA SDK and separate browser profile are kept.

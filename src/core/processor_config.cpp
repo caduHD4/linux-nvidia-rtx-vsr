@@ -55,7 +55,11 @@ std::optional<ProcessorConfig> SelectBrowserProcessorConfig(Dimensions input, in
   if(target_height != -1 && target_height != 1080 && target_height != 1440 &&
      target_height != 2160) return std::nullopt;
   if(input.width>4096 || input.height>2160) return std::nullopt;
-  if(input.width>1920 || input.height>1080) return select(input);
+  if(input.width>1920 || input.height>1080) {
+    auto config = select(input);
+    if(config) config->quality = 8;  // Bound the cost of native 1440p/4K denoise.
+    return config;
+  }
   if(target_height != -1) {
     if(target_height != 1080 && target_height != 1440 && target_height != 2160)
       return std::nullopt;
