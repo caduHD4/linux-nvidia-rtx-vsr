@@ -22,8 +22,16 @@ For **Brave RTX VSR (Experimental)**, preview.2 and newer include resolution,
 sharpness and Restore defaults in **Settings → System**. Restart to apply.
 Videos above 1080p use Low denoise at native resolution (up to 4096×2160);
 upscaling uses VSR Ultra. Brave uses the separate `linux-nvidia-brave-vsr` app,
-configuration and profile names. To update, close the experimental Brave and run
-`install.py` from the newly extracted package; your browser profile is retained.
+configuration and profile names. To update from an older preview, close the
+experimental Brave, then run:
+
+```bash
+python3 "$HOME/.local/share/linux-nvidia-brave-vsr/install.py" --uninstall
+```
+
+Then run `install.py --sdk /path/to/VideoFX` from the newly extracted package.
+Adjust the old installation path if you use custom XDG_DATA_HOME. Your browser
+profile and NVIDIA SDK are retained.
 
 SDK path and preset are stored in `$XDG_CONFIG_HOME/linux-nvidia-vsr/config.json` (default `~/.config`). `VFXSDK_ROOT` and `NVVFX_VSR_TARGET_HEIGHT` override them. `~/.local/bin/linux-nvidia-vsr --check` checks prerequisites; it does not prove playback/inference.
 
