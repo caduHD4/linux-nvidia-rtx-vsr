@@ -28,6 +28,13 @@ int main() { try {
   Check(ClassifyFrame(frame)==FrameBypass::Geometry,"non-square pixels accepted");
   frame.square_pixels=true;frame.input={3840,2160};
   Check(ClassifyFrame(frame)==FrameBypass::AboveTarget,"4K frame accepted");
+  Check(ClassifyFrame(frame,{4096,2160})==FrameBypass::None,"eligible 4K SDR frame rejected");
+  frame.encrypted_track=true;
+  Check(ClassifyFrame(frame,{4096,2160})==FrameBypass::Protected,"4K protected gate lost");
+  frame.encrypted_track=false;frame.hdr=true;
+  Check(ClassifyFrame(frame,{4096,2160})==FrameBypass::Color,"4K HDR gate lost");
+  frame.hdr=false;frame.input={7680,4320};
+  Check(ClassifyFrame(frame,{4096,2160})==FrameBypass::AboveTarget,"8K resource cap lost");
   frame.input={1920,1080};frame.opaque=false;
   Check(ClassifyFrame(frame)==FrameBypass::Format,"alpha frame accepted");
   frame.opaque=true;frame.valid_sdr_color=false;

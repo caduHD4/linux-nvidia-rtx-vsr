@@ -31,7 +31,9 @@ int main() {
     auto portrait=SelectBrowserProcessorConfig({360,640});
     Check(portrait && portrait->output.width==810 && portrait->output.height==1440,
           "1440p must preserve portrait aspect");
-    Check(!SelectBrowserProcessorConfig({2560,1440}),"source above 1080p must retain bypass");
+    auto higher=SelectBrowserProcessorConfig({2560,1440});
+    Check(higher && higher->quality==11 && higher->output.width==2560 && higher->output.height==1440,
+          "1440p source must denoise at native resolution");
     for(const char* setting:{"1080","invalid","4320"}) {
       setenv("NVVFX_VSR_TARGET_HEIGHT",setting,1);
       auto safe=SelectBrowserProcessorConfig({1920,1080});
@@ -47,7 +49,18 @@ int main() {
     }
     for(int invalid:{-2,1,720,4320})
       Check(!SelectBrowserProcessorConfig({1280,720},invalid),"invalid explicit quality must bypass");
-    Check(!SelectBrowserProcessorConfig({2560,1440},2160),"explicit target must preserve source cap");
+    for(int target:{1080,1440,2160}) {
+      for(Dimensions input:{Dimensions{2560,1440},Dimensions{3840,2160},Dimensions{4096,2160}}) {
+        auto native_high=SelectBrowserProcessorConfig(input,target,8,0.65F);
+        Check(native_high && native_high->quality==8 && native_high->output.width==input.width &&
+              native_high->output.height==input.height && native_high->sharpness==0.65F,
+              "high-resolution source must keep native dimensions and image settings");
+      }
+    }
+    Check(!SelectBrowserProcessorConfig({3840,2160},0),"Off must bypass high-resolution denoise");
+    Check(!SelectBrowserProcessorConfig({3840,2160},720),"invalid target must bypass high-resolution denoise");
+    Check(!SelectBrowserProcessorConfig({7680,4320},2160),"8K source must retain bounded bypass");
+    Check(!SelectBrowserProcessorConfig({4097,2160},2160),"over-width source must bypass");
     unsetenv("NVVFX_VSR_TARGET_HEIGHT");
     for(int mode:{8,9,10,11}) {
       auto denoise=SelectBrowserProcessorConfig({1920,1080},1080,mode,0.65F);

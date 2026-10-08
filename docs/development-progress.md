@@ -467,3 +467,30 @@ Reports: validation/brave-image-ui-report.json and brave-image-playback-summary.
 on the build host (not committed). Independent review found no important issue;
 its minor slider-step inconsistency was fixed by using step1. The first binary
 release remains unchanged, and GPU sandbox inference remains unvalidated.
+
+
+## 2026-10-07 — Native denoise for higher-resolution sources
+
+Browser eligibility now accepts SDR sources through 4096x2160. Inputs above
+1920x1080 denoise at their exact native dimensions using the selected mode and
+sharpness, independently of upscale target. Off and invalid settings bypass;
+protected/HDR/format/geometry gates and watchdog are unchanged. Generic frame
+classification retains its original default cap.
+
+Configuration and eligibility CPU tests passed, Python 51/51 passed, and the
+incremental Brave build succeeded (13 steps, 12.08s). Complete/reverse patch
+checks and reconstructed c797aee, 1fa419a and 3a23bc7 migrations passed. Independent
+review found no important issue.
+
+Isolated RTX 4070 SUPER playback with target1080, Ultra denoise and sharpness35
+confirmed native 2560x1440 at 30fps and 3840x2160 at 24fps, post-warmup continuity,
+zero player-reported dropped frames, and enhancement stopping on fullscreen exit.
+4K GPU timings were about 38–41ms/frame; this is not a 4K60 guarantee. Initial
+runs with another experimental browser using the GPU failed continuity; closing
+that competing session restored it without pipeline changes. Reports on host:
+port/validation/vsr-1791417601625989132 and vsr-1791417641246050746.
+The first published binary preview remains unchanged; these changes are source
+and local-build updates.
+
+1080p30 → 4K upscale regression also passed continuity and fullscreen exit
+(480 selected enhanced frames): port/validation/vsr-1791417679579979250.

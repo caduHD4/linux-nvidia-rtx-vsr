@@ -3408,7 +3408,7 @@ new file mode 100644
 +  info.square_pixels=static_cast<int64_t>(visible.width())*natural.height()==
 +      static_cast<int64_t>(visible.height())*natural.width();
 +  info.input={visible.width(),visible.height()};
-+  return nvvfx_vsr::ClassifyFrame(info);
++  return nvvfx_vsr::ClassifyFrame(info,{4096,2160});
 +}
 +struct NvidiaVsrFrameClient::FrameSnapshot {
 +  gfx::Size natural_size;
@@ -5341,7 +5341,7 @@ new file mode 100644
 +};
 +std::optional<ProcessorConfig> SelectProcessorConfig(Dimensions input,
 +                                                    Dimensions target);
-+// Browser-only output preset; source eligibility remains limited to 1080p.
++// Browser preset: upscale <=1080p, native denoise above it through 4096x2160.
 +std::optional<ProcessorConfig> SelectBrowserProcessorConfig(Dimensions input,
 +                                                            int target_height = -1,
 +                                                            int denoise_quality = 11,
@@ -5653,7 +5653,7 @@ diff --git a/third_party/nvidia_vsr/src/processor_config.cpp b/third_party/nvidi
 new file mode 100644
 --- /dev/null
 +++ b/third_party/nvidia_vsr/src/processor_config.cpp
-@@ -0,0 +1,70 @@
+@@ -0,0 +1,74 @@
 +#include "nvvfx_vsr/processor_config.h"
 +#include <algorithm>
 +#include <cmath>
@@ -5706,8 +5706,12 @@ new file mode 100644
 +    config->sharpness = sharpness;
 +    return config;
 +  };
-+  // Preserve the source cap and fail closed to the previous output preset.
-+  if(input.width>1920 || input.height>1080) return std::nullopt;
++  // Higher-resolution inputs denoise in place, independently of upscale target.
++  // Validate Off/invalid settings first so they cannot enable native processing.
++  if(target_height != -1 && target_height != 1080 && target_height != 1440 &&
++     target_height != 2160) return std::nullopt;
++  if(input.width>4096 || input.height>2160) return std::nullopt;
++  if(input.width>1920 || input.height>1080) return select(input);
 +  if(target_height != -1) {
 +    if(target_height != 1080 && target_height != 1440 && target_height != 2160)
 +      return std::nullopt;

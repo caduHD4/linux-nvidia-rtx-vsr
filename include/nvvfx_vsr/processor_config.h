@@ -12,7 +12,7 @@ struct ProcessorConfig {
 };
 std::optional<ProcessorConfig> SelectProcessorConfig(Dimensions input,
                                                     Dimensions target);
-// Browser-only output preset; source eligibility remains limited to 1080p.
+// Browser preset: upscale <=1080p, native denoise above it through 4096x2160.
 std::optional<ProcessorConfig> SelectBrowserProcessorConfig(Dimensions input,
                                                             int target_height = -1,
                                                             int denoise_quality = 11,

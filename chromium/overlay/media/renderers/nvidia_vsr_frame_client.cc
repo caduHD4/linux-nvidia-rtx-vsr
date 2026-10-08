@@ -62,7 +62,7 @@ nvvfx_vsr::FrameBypass ClassifyNvidiaVsrFrame(const VideoFrame& frame,
   info.square_pixels=static_cast<int64_t>(visible.width())*natural.height()==
       static_cast<int64_t>(visible.height())*natural.width();
   info.input={visible.width(),visible.height()};
-  return nvvfx_vsr::ClassifyFrame(info);
+  return nvvfx_vsr::ClassifyFrame(info,{4096,2160});
 }
 struct NvidiaVsrFrameClient::FrameSnapshot {
   gfx::Size natural_size;

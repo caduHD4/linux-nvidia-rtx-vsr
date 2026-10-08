@@ -50,8 +50,12 @@ std::optional<ProcessorConfig> SelectBrowserProcessorConfig(Dimensions input, in
     config->sharpness = sharpness;
     return config;
   };
-  // Preserve the source cap and fail closed to the previous output preset.
-  if(input.width>1920 || input.height>1080) return std::nullopt;
+  // Higher-resolution inputs denoise in place, independently of upscale target.
+  // Validate Off/invalid settings first so they cannot enable native processing.
+  if(target_height != -1 && target_height != 1080 && target_height != 1440 &&
+     target_height != 2160) return std::nullopt;
+  if(input.width>4096 || input.height>2160) return std::nullopt;
+  if(input.width>1920 || input.height>1080) return select(input);
   if(target_height != -1) {
     if(target_height != 1080 && target_height != 1440 && target_height != 2160)
       return std::nullopt;

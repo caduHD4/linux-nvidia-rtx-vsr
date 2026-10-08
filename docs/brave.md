@@ -113,6 +113,9 @@ Restore defaults saves 4K / 35 / Ultra; click **Restart Brave** to apply.
 Sharpness 0 disables the extra sharpening pass. Denoise level applies only when
 input and output resolution match, such as 1080p video at the 1080p target.
 Upscaling keeps VSR Ultra; there is no separate denoise pass while upscaling.
+Sources above 1920×1080 and up to 4096×2160 receive the selected denoise at
+their original resolution, regardless of upscale target. Off disables all
+enhancement. HDR and protected video continue to bypass processing.
 These controls are available in source builds after the first binary preview.
 
 ## Updates
