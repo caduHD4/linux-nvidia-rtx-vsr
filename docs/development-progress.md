@@ -522,7 +522,8 @@ Preview.2 package validation passed through the real per-user installer and
 installed launcher in a relocated path containing spaces. Confirmed native 4K
 Low (mode 8), 1080p→4K VSR (mode 4), and 1080p-native Ultra (mode 11), with 360/480/480
 selected enhanced frames respectively. All three passed post-warmup continuity,
-fullscreen exit and clean shutdown; player-reported dropped frames were zero.
+fullscreen exit and clean shutdown. Player-reported dropped frames were 0/0/3
+respectively over each complete run; the last case still passed continuity.
 Checksums, archive paths and SDK/profile exclusions passed. Package references
 clean source a242614. Archive 365646283 bytes; SHA256 is shipped alongside it.
 Reports: validation/brave-preview2-installed-summary.json on the build host.
